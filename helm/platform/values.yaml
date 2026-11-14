@@ -1,6 +1,5 @@
 observabilityNamespace: observability
 images:
-  provisioningApi: yotta/provisioning-api:local
   databaseApi: yotta/database-api:local
   eventConsumer: yotta/event-consumer:local
   postgres: postgres:16-alpine
@@ -17,7 +16,13 @@ database:
   resources:
     requests: {cpu: 250m, memory: 256Mi}
     limits: {cpu: "1", memory: 1Gi}
-kafka:
+orchestrator:
+  repository: ""
+  workflow: deployment.yml
+  ref: master
+  githubToken: ""
+notification:
+  webhookUrl: ""
 observability:
   loki:
     resources:

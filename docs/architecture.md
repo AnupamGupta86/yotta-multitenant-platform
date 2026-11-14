@@ -1,35 +1,50 @@
 # Architecture
 
-## Runtime topology
+## Website request to deployment
 
-```text
-GitHub-hosted CI
-  ├─ Python tests, Ruff, Bandit, pip-audit, Gitleaks
-  ├─ Dockerfile lint, image build, Trivy and runtime probe
-  └─ publish website-api image + SBOM/provenance to GHCR
-          │
-          ▼
-Self-hosted Mac runner ── Kind cluster
-  ├─ user1 namespace: website API + private PostgreSQL StatefulSet
-  ├─ user2 namespace: website API + private PostgreSQL StatefulSet
-  ├─ user3 namespace: website API + private PostgreSQL StatefulSet
-  ├─ ingress-nginx + cert-manager (one TLS Ingress/Certificate per host)
-  ├─ metrics-server + Prometheus Operator + Grafana
-  └─ Fluentd DaemonSet ──> Loki ──> Grafana
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as Provisioning API
+    participant DB as Provisioning PostgreSQL
+    participant Kafka
+    participant Orchestrator as Deployment Orchestrator
+    participant Actions as GitHub Actions on Mac
+    participant Helm
 
-Helm platform release: provisioning API + private PostgreSQL, database API + private PostgreSQL, Kafka KRaft broker + Python event consumer, Loki, Fluentd, ClusterIssuer, Grafana dashboard
+    User->>API: Submit tenant and domain
+    API->>API: Validate names and domain
+    API->>DB: Save request and event ID
+    API->>Kafka: Publish WebsiteProvisioningRequested
+    API-->>User: 202 Accepted with event ID
+    Kafka->>Orchestrator: WebsiteProvisioningRequested
+    Orchestrator->>Actions: Dispatch deployment.yml
+    Actions->>Helm: Install or upgrade tenant chart
+    Helm-->>Actions: HTTPS check and Helm test
+    Actions->>Kafka: WebsiteCreated or WebsiteDeploymentFailed
+    Kafka->>Orchestrator: Notify through logs or optional webhook
 ```
 
-Helm owns all Kubernetes resources. Each website namespace owns its deployment, database service, password Secret, HPA, PDB, quota, LimitRange, network policy, Ingress, and ServiceMonitor. The platform release owns the provisioning and database APIs, their separate database StatefulSets/Secrets, Kafka and its consumer, and the local logging configuration. Network policy admits website HTTP only from ingress-nginx/observability and database traffic only from that namespace's own API pods. Tenant PostgreSQL instances are never shared.
+## What runs in Kubernetes
 
-## Request and event flow
+The Helm `platform` release installs Kafka, the Python deployment orchestrator, the database API and its private PostgreSQL database, Loki, Fluentd, the local ClusterIssuer, and the Grafana dashboard. The `website-provisioning` API and its database are a separate Helm release installed by the Day 0 GitHub Actions workflow.
 
-Ingress terminates TLS and forwards host-matched traffic to a ClusterIP service. The website API exposes health/version endpoints, a local CPU workload endpoint for load testing, and Prometheus request counters at `/metrics`. Readiness verifies the tenant's PostgreSQL instance. After a Helm upgrade and HTTPS readiness check succeed, `helm test` creates a temporary publisher Job from the chart's test hook and sends one `WebsiteCreated` Kafka event. Event publishing failure triggers Helm rollback.
+Each website has a separate namespace and Helm release. Its release contains the website API, private PostgreSQL StatefulSet, generated database Secret, Ingress, ServiceMonitor, HPA, PDB, quota, LimitRange, and NetworkPolicies. Tenants do not share databases. Website demo databases use `emptyDir`; the Provisioning API has its own PostgreSQL database and a persistent volume by default.
 
-## Dynamic domain mapping
+Helm owns Kubernetes resources. `kubectl` is used for read-only checks, logs, port forwarding, and readiness inspection. Tenant deployments, platform updates, and the Day 0 API install all use Helm.
 
-Each tenant chart release writes an Ingress rule for the configured host and asks cert-manager for a corresponding certificate. Adding another hostname means deploying another release with that host. The ingress controller and cluster do not need to be restarted. Local hosts use `*.localtest.me` DNS-to-loopback and the self-signed issuer; public hosting requires DNS pointed at a reachable ingress address and an ACME issuer.
+## Request and event handling
 
-## Observability
+The FastAPI `website-provisioning` service exposes `POST /api/v1/websites`. It accepts a DNS-safe tenant name and domain, stores the metadata and a stable event ID in its own PostgreSQL database, then publishes `WebsiteProvisioningRequested` to Kafka. Repeating an accepted request for the same tenant and domain returns the same event ID; reusing either value for a different request returns a conflict.
 
-The kube-prometheus-stack chart supplies Prometheus, Grafana, Kubernetes exporters, and base dashboards. A ServiceMonitor in each tenant namespace scrapes `/metrics`. The included Grafana dashboard compares request rates and HPA replica counts and provides a Loki log panel. Fluentd reads node container logs, adds Kubernetes metadata, and sends them to the local Loki service.
+The orchestrator uses a stable Kafka consumer group and commits an offset only after GitHub accepts the workflow dispatch. It dispatches the `deployment.yml` workflow with the tenant, domain, image, and correlation ID. If dispatch fails, it leaves the event uncommitted and retries.
+
+After Helm installs the tenant, the HTTPS health check must pass. The chart's Helm test then publishes `WebsiteCreated`. If installation, health checks, or the Helm test fail, the deployment script rolls back and the Actions workflow publishes `WebsiteDeploymentFailed`. The event consumer sends a short notification to logs (also collected by Fluentd and Loki), or to an optional configured webhook. Only `WebsiteProvisioningRequested` starts a deployment.
+
+Published images use a unique timestamped version such as `1.0.0-20261115040530-run123456789`; the base version comes from `VERSION` and the workflow run ID prevents same-second collisions.
+
+## Scaling and observability
+
+Every website deployment requests CPU and memory. Its HPA scales on both metrics, within the configured tenant quota. The Python load generator calls the CPU workload endpoint so the HPA can be observed under load. A PodDisruptionBudget protects availability during voluntary updates.
+
+Prometheus Operator scrapes each tenant's ServiceMonitor. Grafana includes website request, replica, and log panels. Fluentd reads container logs, adds Kubernetes metadata, and sends them to Loki.

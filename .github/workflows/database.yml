@@ -6,10 +6,10 @@ permissions:
 on:
   push:
     branches: [master, feature, 'feature/**']
-    paths: ['services/database/**', '.github/workflows/**']
+    paths: ['services/database/**', 'VERSION', '.github/workflows/**']
   pull_request:
     branches: [master, feature, 'feature/**']
-    paths: ['services/database/**', '.github/workflows/**']
+    paths: ['services/database/**', 'VERSION', '.github/workflows/**']
   workflow_dispatch:
 jobs:
   service:
@@ -18,3 +18,33 @@ jobs:
     with:
       service: database
       image: database-api
+  deploy-platform:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: service
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    concurrency:
+      group: local-platform-release
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/database-api:${{ needs.service.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - name: Load the validated API image into Kind
+        run: |
+          docker pull "$IMAGE"
+          kind load docker-image "$IMAGE" --name yotta-platform
+      - name: Upgrade the database API with Helm
+        run: |
+          helm upgrade --install platform helm/platform --namespace platform --reuse-values \
+            --set-string images.databaseApi="$IMAGE" --wait --timeout 10m
+          kubectl rollout status deployment/database-api --namespace platform --timeout=5m

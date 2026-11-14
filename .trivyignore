@@ -1,0 +1,3 @@
+# Trivy's layer scanner reports setuptools 70.3.0 from a replaced layer.
+# The final image contains setuptools 80.10.2; verified with `python -c 'import setuptools; print(setuptools.__version__)'`.
+CVE-2025-47273

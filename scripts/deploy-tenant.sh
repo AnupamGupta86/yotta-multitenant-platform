@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-tenant="${1:?usage: deploy-tenant.sh <user1|user2|user3> <domain> <image> }"
+tenant="${1:?usage: deploy-tenant.sh <tenant> <domain> <image> [event-image] [correlation-id]}"
 domain="${2:?domain is required}"
 image="${3:?image is required}"
 event_image="${4:-yotta/event-consumer:local}"
-if [[ ! "$tenant" =~ ^user[1-3]$ ]]; then
-  echo "Unsupported tenant: $tenant (allowed: user1, user2, user3)" >&2
+correlation_id="${5:-}"
+if [[ ! "$tenant" =~ ^[a-z][a-z0-9-]{1,30}[a-z0-9]$ ]]; then
+  echo "Tenant must be a DNS-safe name between 3 and 32 characters" >&2
   exit 2
 fi
-if [[ ! "$domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
-  echo "Domain contains unsupported characters" >&2
+if [[ ! "$domain" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]]; then
+  echo "Domain must contain valid DNS labels" >&2
   exit 2
 fi
 if [[ ! "$image" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
@@ -62,6 +63,7 @@ helm upgrade --install "$release" helm/website \
   --set database.name="$tenant" \
   --set eventPublisher.enabled=true \
   --set eventPublisher.image="$event_image" \
+  --set eventPublisher.correlationId="$correlation_id" \
   --atomic --wait --timeout 10m
 
 for attempt in {1..30}; do

@@ -2,7 +2,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Release.Name }}-publish-website-created
+  name: {{ .Release.Name }}-publish-website-deployed
   annotations:
     helm.sh/hook: test
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
@@ -17,6 +17,9 @@ spec:
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: publish-event
           image: {{ .Values.eventPublisher.image | quote }}
@@ -29,9 +32,18 @@ spec:
             - {{ .Values.ingress.host | quote }}
             - --image
             - {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+            - --event-type
+            - WebsiteCreated
+            - --correlation-id
+            - {{ .Values.eventPublisher.correlationId | quote }}
             - --bootstrap-servers
             - {{ .Values.eventPublisher.bootstrapServers | quote }}
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 250m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: [ALL]}
 {{- end }}

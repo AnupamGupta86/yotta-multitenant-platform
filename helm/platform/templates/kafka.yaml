@@ -16,6 +16,7 @@ spec:
   selector: {app.kubernetes.io/name: kafka}
   ports:
     - {name: internal, port: 19092, targetPort: internal}
+    - {name: external, port: 9092, targetPort: external}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -30,18 +31,25 @@ spec:
     metadata:
       labels: {app.kubernetes.io/name: kafka}
     spec:
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: kafka
           image: {{ .Values.images.kafka | quote }}
           ports:
             - {name: controller, containerPort: 9093}
             - {name: internal, containerPort: 19092}
+            - {name: external, containerPort: 9092}
           env:
             - {name: KAFKA_NODE_ID, value: "1"}
             - {name: KAFKA_PROCESS_ROLES, value: "broker,controller"}
-            - {name: KAFKA_LISTENERS, value: "CONTROLLER://:9093,INTERNAL://:19092"}
-            - {name: KAFKA_ADVERTISED_LISTENERS, value: "INTERNAL://kafka:19092"}
-            - {name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT"}
+            - {name: KAFKA_LISTENERS, value: "CONTROLLER://:9093,INTERNAL://:19092,EXTERNAL://:9092"}
+            - {name: KAFKA_ADVERTISED_LISTENERS, value: "INTERNAL://kafka:19092,EXTERNAL://localhost:19092"}
+            - {name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"}
             - {name: KAFKA_CONTROLLER_LISTENER_NAMES, value: CONTROLLER}
             - {name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@kafka-0.kafka-headless.platform.svc.cluster.local:9093"}
             - {name: KAFKA_INTER_BROKER_LISTENER_NAME, value: INTERNAL}
@@ -58,8 +66,16 @@ spec:
           resources:
             requests: {cpu: 250m, memory: 512Mi}
             limits: {cpu: "2", memory: 2Gi}
-          volumeMounts: [{name: data, mountPath: /var/lib/kafka/data}]
-      volumes: [{name: data, emptyDir: {}}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/kafka/data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -75,12 +91,35 @@ spec:
       labels: {app.kubernetes.io/name: event-consumer}
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: event-consumer
           image: {{ .Values.images.eventConsumer | quote }}
           env:
             - {name: KAFKA_BOOTSTRAP_SERVERS, value: "kafka:19092"}
             - {name: KAFKA_TOPIC, value: website-events}
+            - {name: GH_REPOSITORY, value: {{ .Values.orchestrator.repository | quote }}}
+            - {name: GH_WORKFLOW_NAME, value: {{ .Values.orchestrator.workflow | quote }}}
+            - {name: GH_REF, value: {{ .Values.orchestrator.ref | quote }}}
+            - name: NOTIFICATION_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: notification-webhook
+                  key: url
+                  optional: true
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator-github-token
+                  key: token
+                  optional: true
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 250m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: [ALL]}

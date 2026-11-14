@@ -49,17 +49,29 @@ spec:
     spec:
       serviceAccountName: fluentd
       tolerations: [{operator: Exists}]
-      securityContext: {runAsUser: 0}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: fluentd
           image: {{ .Values.images.fluentd | quote }}
           imagePullPolicy: IfNotPresent
           resources: {{- toYaml .Values.observability.fluentd.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: config, mountPath: /fluentd/etc/fluent.conf, subPath: fluent.conf}
             - {name: containers, mountPath: /var/log/containers, readOnly: true}
             - {name: pods, mountPath: /var/log/pods, readOnly: true}
             - {name: buffer, mountPath: /var/log/fluentd}
+            - {name: tmp, mountPath: /tmp}
       volumes:
         - name: config
           configMap: {name: fluentd-config}
@@ -68,4 +80,6 @@ spec:
         - name: pods
           hostPath: {path: /var/log/pods}
         - name: buffer
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}

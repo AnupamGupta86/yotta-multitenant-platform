@@ -1,0 +1,97 @@
+name: Website Provisioning Day 0
+on:
+  push:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'services/website-provisioning/**'
+      - 'VERSION'
+      - 'helm/website-provisioning/**'
+      - '.github/workflows/website-provisioning.yml'
+      - '.github/workflows/service-ci.yml'
+  pull_request:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'services/website-provisioning/**'
+      - 'VERSION'
+      - 'helm/website-provisioning/**'
+      - '.github/workflows/website-provisioning.yml'
+      - '.github/workflows/service-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+concurrency:
+  group: local-platform-release
+  cancel-in-progress: false
+jobs:
+  chart-validation:
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Lint and render the Day 0 chart
+        run: |
+          helm lint helm/website-provisioning
+          mkdir -p /tmp/rendered-manifests
+          helm template website-provisioning helm/website-provisioning --namespace platform > /tmp/rendered-manifests/website-provisioning.yaml
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: Validate rendered resources
+        run: kubeconform -strict -ignore-missing-schemas /tmp/rendered-manifests/website-provisioning.yaml
+      - name: Scan rendered Kubernetes resources for security misconfigurations
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: config
+          scan-ref: /tmp/rendered-manifests
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+  service:
+    needs: chart-validation
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    uses: ./.github/workflows/service-ci.yml
+    with:
+      service: website-provisioning
+      image: website-provisioning
+  deploy-day0:
+    needs: [chart-validation, service]
+    if: needs.service.result == 'success' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))))
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    permissions:
+      contents: read
+      packages: read
+    env:
+      PROVISIONING_IMAGE: ghcr.io/${{ github.repository_owner }}/website-provisioning:${{ needs.service.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Confirm the platform is installed
+        run: helm status platform --namespace platform
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - name: Load the validated API image into Kind
+        run: |
+          docker pull "$PROVISIONING_IMAGE"
+          kind load docker-image "$PROVISIONING_IMAGE" --name yotta-platform
+      - name: Install or upgrade the Day 0 Helm release
+        run: |
+          image_tag="${PROVISIONING_IMAGE##*:}"
+          helm upgrade --install website-provisioning helm/website-provisioning \
+            --namespace platform \
+            --set-string image.repository="${PROVISIONING_IMAGE%:*}" \
+            --set-string image.tag="$image_tag" \
+            --wait --timeout 10m
+          kubectl rollout status deployment/website-provisioning --namespace platform --timeout=5m

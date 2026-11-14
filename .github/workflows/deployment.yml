@@ -1,25 +1,46 @@
 name: Local Kind deployment
 on:
   push:
-    branches: [master]
+    branches: [master, feature, 'feature/**']
     paths:
       - 'services/website-app/**'
+      - 'VERSION'
       - 'helm/website/**'
       - 'helm/platform/**'
       - 'scripts/**'
-      - 'k8s/**'
+      - 'kind/**'
+      - 'helm/monitoring/**'
+      - '.github/workflows/deployment.yml'
+      - '.github/workflows/service-ci.yml'
+  pull_request:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'services/website-app/**'
+      - 'VERSION'
+      - 'helm/website/**'
+      - 'helm/platform/**'
+      - 'scripts/**'
+      - 'kind/**'
+      - 'helm/monitoring/**'
       - '.github/workflows/deployment.yml'
       - '.github/workflows/service-ci.yml'
   workflow_dispatch:
     inputs:
       tenant:
-        description: Select all tenants or deploy one tenant
-        type: choice
-        options: [all, user1, user2, user3]
+        description: Tenant name, or all for the three sample tenants
+        type: string
         default: all
         required: false
       domain:
         description: Optional custom domain; defaults to <tenant>.localtest.me
+        type: string
+        required: false
+      image:
+        description: Optional prebuilt image override; normally CI deploys its newly versioned image
+        type: string
+        required: false
+      correlation_id:
+        description: Provisioning request event ID
         type: string
         required: false
 permissions:
@@ -27,7 +48,7 @@ permissions:
   packages: write
   security-events: write
 concurrency:
-  group: local-kind-deployment
+  group: local-platform-release
   cancel-in-progress: false
 jobs:
   chart-validation:
@@ -44,34 +65,46 @@ jobs:
         run: |
           helm lint helm/platform
           helm lint helm/website
+          helm lint helm/website-provisioning
       - name: Render Helm charts
         run: |
-          helm template platform helm/platform --namespace platform > /tmp/platform.yaml
+          mkdir -p /tmp/rendered-manifests
+          helm template platform helm/platform --namespace platform > /tmp/rendered-manifests/platform.yaml
           helm template user1 helm/website --namespace user1 \
             --set tenant.name=user1 --set ingress.host=user1.localtest.me \
-            --set eventPublisher.enabled=true > /tmp/website.yaml
+            --set eventPublisher.enabled=true > /tmp/rendered-manifests/website.yaml
+          helm template website-provisioning helm/website-provisioning --namespace platform > /tmp/rendered-manifests/website-provisioning.yaml
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'
       - name: Install Kubernetes manifest validator
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
       - name: Validate rendered Kubernetes resources
-        run: kubeconform -strict -ignore-missing-schemas /tmp/platform.yaml /tmp/website.yaml
+        run: kubeconform -strict -ignore-missing-schemas /tmp/rendered-manifests/*.yaml
+      - name: Scan rendered Kubernetes resources for security misconfigurations
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: config
+          scan-ref: /tmp/rendered-manifests
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
       - name: Lint Fluentd Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: k8s/fluentd/Dockerfile
+          dockerfile: helm/monitoring/fluentd/Dockerfile
       - uses: docker/setup-buildx-action@v3
       - name: Build Fluentd image
         uses: docker/build-push-action@v6
         with:
-          context: k8s/fluentd
+          context: helm/monitoring/fluentd
           load: true
           tags: local/yotta/fluentd-loki:${{ github.sha }}
       - name: Scan Fluentd image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: local/yotta/fluentd-loki:${{ github.sha }}
+          trivyignores: .trivyignore
           format: table
           exit-code: '1'
           ignore-unfixed: true
@@ -94,8 +127,9 @@ jobs:
     env:
       TENANT_INPUT: ${{ inputs.tenant || '' }}
       DOMAIN_INPUT: ${{ inputs.domain || '' }}
-      IMAGE: ghcr.io/${{ github.repository_owner }}/website-api:${{ github.sha }}
+      IMAGE: ${{ inputs.image || format('ghcr.io/{0}/website-api:{1}', github.repository_owner, needs.build-and-validate.outputs.version) }}
       EVENT_IMAGE: ghcr.io/${{ github.repository_owner }}/website-event-consumer:latest
+      CORRELATION_ID: ${{ inputs.correlation_id || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -106,24 +140,68 @@ jobs:
           GHCR_USER: ${{ github.actor }}
         run: |
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
-      - name: Deploy website tenant(s), smoke test, and publish Kafka event
+      - name: Prepare the platform release
+        run: helm upgrade --install platform helm/platform --namespace platform --reuse-values --wait --timeout 15m
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Kafka event publisher
+        run: python -m pip install --disable-pip-version-check -r services/event-consumer/requirements.txt
+      - name: Deploy tenant(s) and report deployment outcomes
         shell: bash
         run: |
           if [[ -n "$TENANT_INPUT" && "$TENANT_INPUT" != "all" ]]; then
+            if [[ ! "$TENANT_INPUT" =~ ^[a-z][a-z0-9-]{1,30}[a-z0-9]$ ]]; then
+              echo 'Tenant must be a DNS-safe name between 3 and 32 characters.' >&2
+              exit 2
+            fi
             tenants="$TENANT_INPUT"
           else
+            if [[ -n "$DOMAIN_INPUT" ]]; then
+              echo 'Choose one tenant when supplying a custom domain.' >&2
+              exit 2
+            fi
             tenants="user1 user2 user3"
           fi
+          kubectl port-forward --namespace platform service/kafka 19092:9092 > /tmp/kafka-port-forward.log 2>&1 &
+          port_forward_pid=$!
+          trap 'kill "$port_forward_pid" 2>/dev/null || true' EXIT
+          kafka_ready=false
+          for _ in {1..30}; do
+            if nc -z 127.0.0.1 19092; then kafka_ready=true; break; fi
+            sleep 1
+          done
+          if [[ "$kafka_ready" != true ]]; then
+            cat /tmp/kafka-port-forward.log
+            echo 'Kafka port-forward did not become ready.' >&2
+            exit 1
+          fi
+          result=0
           for tenant in $tenants; do
             domain="$DOMAIN_INPUT"
             if [[ -z "$domain" ]]; then domain="${tenant}.localtest.me"; fi
-            ./scripts/deploy-tenant.sh "$tenant" "$domain" "$IMAGE" "$EVENT_IMAGE"
+            set +e
+            ./scripts/deploy-tenant.sh "$tenant" "$domain" "$IMAGE" "$EVENT_IMAGE" "$CORRELATION_ID"
+            deploy_status=$?
+            set -e
+            if [[ "$deploy_status" -ne 0 ]]; then
+              python services/event-consumer/publish_event.py \
+                --tenant "$tenant" --domain "$domain" --image "$IMAGE" \
+                --event-type WebsiteDeploymentFailed --correlation-id "$CORRELATION_ID" \
+                --error 'Helm rollout or deployment health check failed' \
+                --bootstrap-servers 127.0.0.1:19092
+              result=1
+            fi
           done
+          exit "$result"
       - name: Capture deployment evidence
         if: always()
         run: |
           mkdir -p output
-          for tenant in user1 user2 user3; do
+          tenants="$TENANT_INPUT"
+          if [[ -z "$tenants" || "$tenants" == all ]]; then tenants="user1 user2 user3"; fi
+          if [[ "$tenants" != 'user1 user2 user3' && ! "$tenants" =~ ^[a-z][a-z0-9-]{1,30}[a-z0-9]$ ]]; then tenants=user1; fi
+          for tenant in $tenants; do
             kubectl get all,hpa,pdb,resourcequota,ingress --namespace "$tenant" > "output/${tenant}-resources.txt" 2>&1 || true
           done
           kubectl logs --namespace platform deployment/event-consumer --tail=100 > output/kafka-events.log 2>&1 || true

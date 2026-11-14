@@ -1,58 +1,6 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: provisioning-api
-  labels: {app.kubernetes.io/name: provisioning-api}
-spec:
-  replicas: {{ .Values.api.replicas }}
-  selector:
-    matchLabels: {app.kubernetes.io/name: provisioning-api}
-  template:
-    metadata:
-      labels: {app.kubernetes.io/name: provisioning-api}
-    spec:
-      automountServiceAccountToken: false
-      securityContext:
-        seccompProfile: {type: RuntimeDefault}
-      containers:
-        - name: provisioning-api
-          image: {{ .Values.images.provisioningApi | quote }}
-          imagePullPolicy: IfNotPresent
-          env:
-            - {name: PORT, value: {{ .Values.api.port | quote }}}
-            - name: DB_PASSWORD
-              valueFrom: {secretKeyRef: {name: provisioning-db-credentials, key: password}}
-            - name: DATABASE_URL
-              value: postgresql://provisioning:$(DB_PASSWORD)@provisioning-postgres:5432/provisioning
-          ports: [{name: http, containerPort: {{ .Values.api.port }}}]
-          livenessProbe:
-            httpGet: {path: /health/live, port: http}
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          readinessProbe:
-            httpGet: {path: /health/ready, port: http}
-            initialDelaySeconds: 5
-            periodSeconds: 5
-          resources: {{- toYaml .Values.api.resources | nindent 12 }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 10001
-            capabilities: {drop: [ALL]}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: provisioning-api
-  labels: {app.kubernetes.io/name: provisioning-api}
-spec:
-  selector: {app.kubernetes.io/name: provisioning-api}
-  ports: [{name: http, port: 80, targetPort: http}]
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: database-api
   labels: {app.kubernetes.io/name: database-api}
 spec:

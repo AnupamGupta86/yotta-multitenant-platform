@@ -20,7 +20,10 @@ spec:
     metadata:
       labels: {app: loki}
     spec:
-      securityContext: {fsGroup: 10001}
+      securityContext:
+        fsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: loki
           image: {{ .Values.images.loki | quote }}
@@ -29,13 +32,21 @@ spec:
           readinessProbe: {httpGet: {path: /ready, port: http}}
           livenessProbe: {httpGet: {path: /ready, port: http}}
           resources: {{- toYaml .Values.observability.loki.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: config, mountPath: /etc/loki}
             - {name: data, mountPath: /loki}
+            - {name: tmp, mountPath: /tmp}
       volumes:
         - name: config
           configMap: {name: loki-config}
         - {name: data, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
 ---
 apiVersion: v1
 kind: Service

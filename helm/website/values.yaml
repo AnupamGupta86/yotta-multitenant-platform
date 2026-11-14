@@ -45,3 +45,4 @@ eventPublisher:
   enabled: false
   image: yotta/event-consumer:local
   bootstrapServers: kafka.platform.svc.cluster.local:19092
+  correlationId: ""

@@ -1,60 +1,95 @@
-# Yotta multitenant website platform
+# Yotta website platform
 
-Local-first DevOps assignment implementation. The APIs, event producer/consumer, and tests are Python. Docker and GitHub Actions validate the services, build and publish images, and deploy the platform and website APIs into a local Kind cluster on the Mac through a self-hosted runner.
+A small Python-based platform for running isolated customer websites. Each tenant gets a Kubernetes namespace, its own website API, and a private PostgreSQL database. Helm manages every Kubernetes deployment.
 
-## What is included
+## Request flow
 
-- Three isolated website namespaces: `user1`, `user2`, and `user3`; each chart release has its own PostgreSQL StatefulSet and secret.
-- The provisioning API and database API run in the `platform` namespace with separate PostgreSQL StatefulSets and Helm-managed credential Secrets.
-- Kafka, the Python event consumer, Loki, Fluentd, the local certificate issuer, and the Grafana dashboard are also resources in the Helm-managed `platform` release.
-- Dynamic host-based Ingress (`user1.localtest.me`, etc.) with TLS certificates issued automatically by cert-manager. The local issuer is self-signed; use an ACME ClusterIssuer for public domains.
-- Readiness/liveness probes, tenant resource quotas and LimitRanges, CPU/memory HPA, PDB, and namespace-scoped NetworkPolicies.
-- Prometheus metrics and a Grafana dashboard; Fluentd collects Kubernetes container logs and writes them to Loki, which is available as a Grafana datasource.
-- A single-node Kafka KRaft broker and Python consumer in Kubernetes; a Helm test hook publishes `WebsiteCreated` only after the deployment and HTTPS smoke check pass.
-- Reusable service CI for provisioning API, database API, and website API, plus a Kafka consumer workflow. Checks include tests, Ruff, Bandit, pip-audit, Gitleaks, Hadolint, Trivy image scanning, and a Docker runtime health probe. Successful images are published to GHCR with an SBOM and provenance.
-- A self-hosted macOS GitHub Actions deployment workflow, Helm rollback, and downloadable deployment evidence.
+1. A user submits a tenant name and domain to the Provisioning API.
+2. The FastAPI service validates the request, saves it in PostgreSQL, and publishes `WebsiteProvisioningRequested` to Kafka.
+3. The deployment orchestrator consumes that event and starts the GitHub Actions deployment workflow.
+4. GitHub Actions installs or upgrades the website with Helm on the Mac's Kind cluster.
+5. The workflow checks the HTTPS health endpoint. A successful Helm test publishes `WebsiteCreated`. If deployment fails, Helm rolls back and the workflow publishes `WebsiteDeploymentFailed`.
+6. The lifecycle consumer logs a human-readable notification and can forward it to a configured webhook.
 
-## Prerequisites on the Mac
+## First-time setup
 
-Install and start Docker Desktop, then install `kind`, `kubectl`, Helm 3.17+, `gh`, and Python 3.12+. Ingress binds loopback ports 8081 and 8443 to avoid conflicts with existing Mac services.
+Install Docker Desktop, Kind, kubectl, Helm 3.17+, Python 3.12+, and a self-hosted GitHub Actions runner on the Mac. Create a fine-grained GitHub token for the target repository with **Actions: Read and write**. The orchestrator uses it only to dispatch the deployment workflow.
+
+Set the repository and token before installing the local platform:
 
 ```sh
+export ORCHESTRATOR_REPOSITORY=owner/repository
+export ORCHESTRATOR_GITHUB_TOKEN=your-fine-grained-token
 ./scripts/setup-kind.sh
 ```
 
-The setup script creates the `yotta-platform` Kind cluster and uses Helm releases for Calico, ingress-nginx, metrics-server, cert-manager, kube-prometheus-stack, Loki, Fluentd, Kafka, the APIs, and their databases. The local `platform` chart also owns the ClusterIssuer and Grafana dashboard. The website chart owns its namespace resources and database credentials. Kind needs explicit host port mappings for Docker Desktop, and Calico replaces kindnet so tenant NetworkPolicies are actually enforced.
+The token is stored in the platform's Kubernetes Secret so the in-cluster orchestrator can dispatch workflows. For a production cluster, use an external secret manager instead of Helm values.
 
-Docker Compose remains available as an optional local development and CI test fixture; it is not used by the deployment workflow. For local API development, it initializes separate `provisioning`, `database_api`, `website_user1`, `website_user2`, and `website_user3` databases. These demo credentials are intentionally not production secrets. Kubernetes creates separate API databases and one database per website tenant, with Helm-managed random password Secrets. Demo database data uses `emptyDir`, so deleting a tenant namespace or the local Kind cluster deletes its database data.
+After the cluster is ready, run **Actions → Website Provisioning Day 0 → Run workflow** from `master`. This separately installs the provisioning API and its database. Pushes to `master` that change the API or its Helm chart also upgrade this Day 0 release automatically on the Mac runner.
 
-The current Kind cluster was originally bootstrapped with Calico raw manifests. The updated setup script refuses to silently mix that installation with the Helm-managed Calico release. Back up any demo data and recreate that cluster before using the new Helm-only setup.
+## Submit a website request
 
-## GitHub Actions deployment on this Mac
-
-Register a self-hosted GitHub runner on the Mac with the custom label `yotta-local-k8s`. Follow [the local runner guide](docs/local-runner.md). The deployment workflow uses GitHub-hosted runners to validate and publish `website-api`, then runs only the deploy step on the Mac. The Mac runner must share the local user's Docker context and Kind cluster.
-
-Push to `master` to deploy all three tenants after CI succeeds, or choose **Actions → Local Kind deployment → Run workflow** to deploy one tenant or all three from `master` or a `feature/*` branch. An optional domain input lets you map a custom host to the local ingress. The runner pulls the published images, loads them into Kind, performs Helm upgrades, checks HTTPS readiness, then runs the website chart's Helm test hook to publish a Kafka event. If deployment, the smoke check, or event publication fails, Helm rolls back the website release.
+Forward the provisioning API to your Mac:
 
 ```sh
-# Manual local deployment without GitHub Actions
-IMAGE=ghcr.io/<owner>/website-api:<image-tag> ./scripts/deploy-platform.sh
+kubectl port-forward -n platform svc/website-provisioning 3001:80
+```
 
-# Capture namespace, HPA, ingress, and Kafka evidence
-./scripts/verify-deployment.sh user1 user1.localtest.me
+Submit a tenant and domain to the FastAPI endpoint. The `tenant` becomes the namespace and Helm release name; the domain is added to Ingress dynamically.
 
-# Generate CPU load for the autoscaling demonstration (watch HPA in another terminal)
+```sh
+curl -sS -X POST http://127.0.0.1:3001/api/v1/websites \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant":"user4","domain":"user4.localtest.me"}'
+```
+
+The API returns `202 Accepted` with an event ID. It publishes `WebsiteProvisioningRequested`. After the deployment, the platform publishes either `WebsiteCreated` or `WebsiteDeploymentFailed`. Follow the event and workflow logs with:
+
+```sh
+kubectl logs -n platform deployment/event-consumer -f
+kubectl logs -n platform deployment/website-provisioning -f
+```
+
+For this local demo, `*.localtest.me` resolves to loopback and the self-signed certificate requires `curl -k` or a browser exception.
+
+## What the assignment demo includes
+
+- Sample tenants `user1`, `user2`, and `user3`, plus dynamic tenant names and domains.
+- Separate PostgreSQL databases, Kubernetes namespaces, Secrets, and network policies.
+- TLS Ingress, liveness/readiness probes, CPU and memory requests/limits, quotas, and PodDisruptionBudgets.
+- CPU/memory HPA, a Python load generator, Prometheus, Grafana dashboards, Fluentd, and Loki.
+- Kafka request and outcome events, workflow dispatch, Helm rollback, Docker image scans, and build evidence uploaded as a GitHub Actions artifact.
+- A timestamped image version such as `1.0.0-20261115040530-run123456789`; edit `VERSION` to change the major, minor, or patch number.
+
+Run the load generator while watching the HPA:
+
+```sh
 kubectl get hpa -n user1 -w
 python3 scripts/load_test.py --tenant user1 --seconds 180 --workers 40
 ```
 
-Domains are independent Ingress resources. Add a tenant by deploying a chart release in a new namespace and supplying its domain; no ingress-controller restart or cluster redeployment is needed. `localtest.me` resolves to loopback for local demonstrations. For real custom domains, point DNS to the ingress address and switch from `local-selfsigned` to a public ACME issuer.
+## CI/CD and local deployment
 
-## Access and evidence
+Service workflows validate and publish Python service images on `master` and feature branches. Each published image gets a unique UTC timestamp tag down to seconds plus the GitHub run ID, while commit tags remain available for tracing. Pull requests run the same validation without publishing. The website deployment workflow deploys sample tenants on `master`; the orchestrator starts that workflow for submitted requests. The Provisioning API has a separate Day 0 workflow.
 
-- Websites: `https://user1.localtest.me:8443`, `https://user2.localtest.me:8443`, `https://user3.localtest.me:8443` (self-signed TLS; use `curl -k` for local checks).
-- Grafana: run `kubectl port-forward -n observability svc/prometheus-grafana 3000:80`, then open `http://localhost:3000`; user `admin`, password `local-demo-only-change-me`.
-- Prometheus: `kubectl port-forward -n observability svc/prometheus-kube-prometheus-prometheus 9090:9090`.
-- Provisioning API: run `kubectl port-forward -n platform svc/provisioning-api 3001:80`, then open `http://localhost:3001/api/v1`; Database API: run `kubectl port-forward -n platform svc/database-api 3002:80`.
-- Kafka is in-cluster at `kafka.platform.svc.cluster.local:19092`; consumer logs: `kubectl logs -n platform deployment/event-consumer -f`.
-- Deployment artifacts include Kubernetes resources and Kafka consumer logs. `scripts/verify-deployment.sh` writes local evidence into the ignored `output/` directory.
+CI checks Python style and unit tests, scans Python code and dependencies, checks for committed secrets, lints Dockerfiles, scans built images, and starts each API image against PostgreSQL to check its health endpoint. The Kafka workflow also sends an event through a real local broker. Helm charts are linted, rendered, checked against Kubernetes schemas, and scanned for deployment security settings.
 
-The local Grafana password, self-signed certificates, single-node Kafka, and in-memory Loki are suitable for the assignment demo only. Do not expose these services to the public internet or reuse the demo secrets in production.
+To deploy the three sample tenants manually through Helm:
+
+```sh
+IMAGE=ghcr.io/<owner>/website-api:<image-tag> \\
+EVENT_IMAGE=ghcr.io/<owner>/website-event-consumer:<image-tag> \\
+PULL_IMAGE=true ./scripts/deploy-platform.sh
+```
+
+To check a deployment and capture local evidence:
+
+```sh
+./scripts/verify-deployment.sh user1 user1.localtest.me
+```
+
+Docker Compose is for local development and the Kafka integration test. It defaults the orchestrator to dry-run mode. To make Compose dispatch a real GitHub workflow, set `ORCHESTRATOR_DRY_RUN=false`, `ORCHESTRATOR_REPOSITORY`, and `ORCHESTRATOR_GITHUB_TOKEN`.
+
+Deployment outcome notifications are written to the event-consumer logs by default, which Fluentd forwards to Loki. To also send them to a webhook, set `NOTIFICATION_WEBHOOK_URL` before running `scripts/setup-kind.sh`; the platform chart stores it in a Kubernetes Secret.
+
+See [deployment instructions](docs/deployment.md), [architecture](docs/architecture.md), [local runner setup](docs/local-runner.md), and [rollback notes](docs/rollback.md).

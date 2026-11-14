@@ -15,15 +15,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-  provisioning-api:
-    build: ./services/provisioning-api
+  website-provisioning:
+    build: ./services/website-provisioning
     environment:
       DATABASE_URL: postgresql://provisioning:provisioning-local-only@postgres:5432/provisioning
       PORT: 3000
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_TOPIC: website-events
     ports:
       - "127.0.0.1:3001:3000"
     depends_on:
       postgres:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     restart: unless-stopped
   database-api:
@@ -68,6 +72,12 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
       KAFKA_TOPIC: website-events
+      GH_REPOSITORY: ${ORCHESTRATOR_REPOSITORY:-}
+      GH_WORKFLOW_NAME: deployment.yml
+      GH_REF: master
+      GH_TOKEN: ${ORCHESTRATOR_GITHUB_TOKEN:-}
+      ORCHESTRATOR_DRY_RUN: ${ORCHESTRATOR_DRY_RUN:-true}
+      NOTIFICATION_WEBHOOK_URL: ${NOTIFICATION_WEBHOOK_URL:-}
     depends_on:
       kafka:
         condition: service_healthy
