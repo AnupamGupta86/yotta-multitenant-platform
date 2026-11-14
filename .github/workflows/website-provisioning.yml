@@ -48,7 +48,7 @@ jobs:
       - name: Validate rendered resources
         run: kubeconform -strict -ignore-missing-schemas /tmp/rendered-manifests/website-provisioning.yaml
       - name: Scan rendered Kubernetes resources for security misconfigurations
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: /tmp/rendered-manifests
