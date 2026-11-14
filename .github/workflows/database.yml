@@ -1,0 +1,20 @@
+name: Database API
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+on:
+  push:
+    branches: [master, feature, 'feature/**']
+    paths: ['services/database/**', '.github/workflows/**']
+  pull_request:
+    branches: [master, feature, 'feature/**']
+    paths: ['services/database/**', '.github/workflows/**']
+  workflow_dispatch:
+jobs:
+  service:
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    uses: ./.github/workflows/service-ci.yml
+    with:
+      service: database
+      image: database-api

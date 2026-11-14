@@ -1,0 +1,137 @@
+name: Local Kind deployment
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'services/website-app/**'
+      - 'helm/website/**'
+      - 'helm/platform/**'
+      - 'scripts/**'
+      - 'k8s/**'
+      - '.github/workflows/deployment.yml'
+      - '.github/workflows/service-ci.yml'
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: Select all tenants or deploy one tenant
+        type: choice
+        options: [all, user1, user2, user3]
+        default: all
+        required: false
+      domain:
+        description: Optional custom domain; defaults to <tenant>.localtest.me
+        type: string
+        required: false
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+concurrency:
+  group: local-kind-deployment
+  cancel-in-progress: false
+jobs:
+  chart-validation:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Lint Helm charts
+        run: |
+          helm lint helm/platform
+          helm lint helm/website
+      - name: Render Helm charts
+        run: |
+          helm template platform helm/platform --namespace platform > /tmp/platform.yaml
+          helm template user1 helm/website --namespace user1 \
+            --set tenant.name=user1 --set ingress.host=user1.localtest.me \
+            --set eventPublisher.enabled=true > /tmp/website.yaml
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: Validate rendered Kubernetes resources
+        run: kubeconform -strict -ignore-missing-schemas /tmp/platform.yaml /tmp/website.yaml
+      - name: Lint Fluentd Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: k8s/fluentd/Dockerfile
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Fluentd image
+        uses: docker/build-push-action@v6
+        with:
+          context: k8s/fluentd
+          load: true
+          tags: local/yotta/fluentd-loki:${{ github.sha }}
+      - name: Scan Fluentd image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: local/yotta/fluentd-loki:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+  build-and-validate:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    needs: chart-validation
+    uses: ./.github/workflows/service-ci.yml
+    with:
+      service: website-app
+      image: website-api
+  deploy-local:
+    needs: [chart-validation, build-and-validate]
+    if: needs.build-and-validate.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    permissions:
+      contents: read
+      packages: read
+    env:
+      TENANT_INPUT: ${{ inputs.tenant || '' }}
+      DOMAIN_INPUT: ${{ inputs.domain || '' }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/website-api:${{ github.sha }}
+      EVENT_IMAGE: ghcr.io/${{ github.repository_owner }}/website-event-consumer:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - name: Deploy website tenant(s), smoke test, and publish Kafka event
+        shell: bash
+        run: |
+          if [[ -n "$TENANT_INPUT" && "$TENANT_INPUT" != "all" ]]; then
+            tenants="$TENANT_INPUT"
+          else
+            tenants="user1 user2 user3"
+          fi
+          for tenant in $tenants; do
+            domain="$DOMAIN_INPUT"
+            if [[ -z "$domain" ]]; then domain="${tenant}.localtest.me"; fi
+            ./scripts/deploy-tenant.sh "$tenant" "$domain" "$IMAGE" "$EVENT_IMAGE"
+          done
+      - name: Capture deployment evidence
+        if: always()
+        run: |
+          mkdir -p output
+          for tenant in user1 user2 user3; do
+            kubectl get all,hpa,pdb,resourcequota,ingress --namespace "$tenant" > "output/${tenant}-resources.txt" 2>&1 || true
+          done
+          kubectl logs --namespace platform deployment/event-consumer --tail=100 > output/kafka-events.log 2>&1 || true
+          kubectl get pods --all-namespaces -o wide > output/cluster-pods.txt 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: local-deployment-evidence-${{ github.run_id }}
+          path: output/
+          if-no-files-found: warn
+          retention-days: 14

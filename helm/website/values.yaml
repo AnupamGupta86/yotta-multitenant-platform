@@ -1,0 +1,47 @@
+tenant:
+  name: user1
+image:
+  repository: ghcr.io/owner/website-api
+  tag: latest
+  pullPolicy: IfNotPresent
+replicaCount: 2
+containerPort: 3000
+ingress:
+  enabled: true
+  className: nginx
+  host: user1.localtest.me
+  clusterIssuer: local-selfsigned
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  cpuUtilization: 60
+  memoryUtilization: 75
+quota:
+  requestsCpu: "4"
+  requestsMemory: 4Gi
+  limitsCpu: "8"
+  limitsMemory: 8Gi
+  pods: "20"
+serviceMonitor:
+  enabled: true
+  release: prometheus
+pdb:
+  minAvailable: 1
+database:
+  enabled: true
+  secretName: tenant-db-credentials
+  user: website
+  name: website
+  image: postgres:16-alpine
+eventPublisher:
+  enabled: false
+  image: yotta/event-consumer:local
+  bootstrapServers: kafka.platform.svc.cluster.local:19092

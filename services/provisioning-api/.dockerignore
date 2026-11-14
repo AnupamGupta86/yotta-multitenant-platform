@@ -1,0 +1,6 @@
+test
+coverage
+.git
+.env*
+__pycache__
+*.py[cod]

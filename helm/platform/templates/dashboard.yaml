@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: website-platform-dashboard
+  namespace: {{ .Values.observabilityNamespace }}
+  labels:
+    grafana_dashboard: "1"
+data:
+  website-platform.json: |
+{{ .Files.Get "files/website-dashboard.json" | indent 4 }}

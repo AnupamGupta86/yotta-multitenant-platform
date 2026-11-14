@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluentd
+  namespace: {{ .Values.observabilityNamespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-fluentd
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-fluentd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-fluentd
+subjects:
+  - kind: ServiceAccount
+    name: fluentd
+    namespace: {{ .Values.observabilityNamespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: {{ .Values.observabilityNamespace }}
+data:
+  fluent.conf: |
+{{ .Files.Get "files/fluent.conf" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: {{ .Values.observabilityNamespace }}
+spec:
+  selector:
+    matchLabels: {app: fluentd}
+  template:
+    metadata:
+      labels: {app: fluentd}
+    spec:
+      serviceAccountName: fluentd
+      tolerations: [{operator: Exists}]
+      securityContext: {runAsUser: 0}
+      containers:
+        - name: fluentd
+          image: {{ .Values.images.fluentd | quote }}
+          imagePullPolicy: IfNotPresent
+          resources: {{- toYaml .Values.observability.fluentd.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /fluentd/etc/fluent.conf, subPath: fluent.conf}
+            - {name: containers, mountPath: /var/log/containers, readOnly: true}
+            - {name: pods, mountPath: /var/log/pods, readOnly: true}
+            - {name: buffer, mountPath: /var/log/fluentd}
+      volumes:
+        - name: config
+          configMap: {name: fluentd-config}
+        - name: containers
+          hostPath: {path: /var/log/containers}
+        - name: pods
+          hostPath: {path: /var/log/pods}
+        - name: buffer
+          emptyDir: {}

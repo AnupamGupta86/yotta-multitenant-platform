@@ -1,0 +1,35 @@
+{
+  "title": "Yotta Website Platform",
+  "uid": "yotta-websites",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {"from": "now-30m", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP requests per second by tenant",
+      "type": "timeseries",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 0},
+      "targets": [{"refId": "A", "expr": "sum(rate(yotta_http_requests_total[2m])) by (tenant)", "legendFormat": "{{tenant}}"}]
+    },
+    {
+      "id": 2,
+      "title": "Website replicas (current / desired)",
+      "type": "timeseries",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {"refId": "A", "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"user[1-3]\"}", "legendFormat": "current {{namespace}}"},
+        {"refId": "B", "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"user[1-3]\"}", "legendFormat": "desired {{namespace}}"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Website API logs",
+      "type": "logs",
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 9},
+      "targets": [{"refId": "A", "expr": "{namespace=~\"user1|user2|user3\", container=\"website-api\"}"}]
+    }
+  ]
+}
