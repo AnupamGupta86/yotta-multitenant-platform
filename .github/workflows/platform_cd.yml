@@ -16,18 +16,23 @@ concurrency:
 jobs:
   validate-chart:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
-    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: azure/setup-helm@v4
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: azure/setup-helm@v5
         with:
-          version: v3.17.3
+          version: ${{ steps.pipeline.outputs.helm_version }}
       - name: Lint and render platform chart
         run: |
           helm lint helm/platform
-          helm template platform helm/platform --namespace platform > /tmp/platform.yaml
+          helm template "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" > /tmp/platform.yaml
   deploy:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
@@ -36,37 +41,40 @@ jobs:
     # GitHub holds this job before any deployment step until approval is granted.
     environment:
       name: platform-deployment
+    permissions:
+      actions: write
+      contents: read
+      packages: read
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
       - name: Validate the selected image tag
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
-        run: |
-          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo 'image_tag must be a valid container image tag.' >&2
-            exit 2
-          fi
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
       - name: Confirm the local Kind cluster is ready
         run: |
-          kind get clusters | grep -qx yotta-platform
-          helm status platform --namespace platform
+          kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
       - name: Authenticate to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+        run: printf '%s' "$GHCR_TOKEN" | docker login "$CONTAINER_REGISTRY" --username "$GHCR_USER" --password-stdin
       - name: Normalize the GHCR image owner
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          echo "FLUENTD_IMAGE=ghcr.io/$owner/fluentd-loki:$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "FLUENTD_IMAGE=$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_ENV"
       - name: Pull and load the Fluentd image into Kind
         run: |
           docker pull "$FLUENTD_IMAGE"
-          kind load docker-image "$FLUENTD_IMAGE" --name yotta-platform
+          kind load docker-image "$FLUENTD_IMAGE" --name "$KIND_CLUSTER_NAME"
       - name: Deploy cluster add-ons through Helm
         run: ./scripts/deploy-cluster-addons.sh
       - name: Read pinned monitoring chart version
@@ -84,15 +92,16 @@ jobs:
             echo 'Repository Actions secret GHCR_TOKEN is required.' >&2
             exit 2
           fi
-          helm upgrade --install platform helm/platform --namespace platform --create-namespace \
+          helm upgrade --install "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" --create-namespace \
             --reuse-values --set-string images.fluentd="$FLUENTD_IMAGE" \
             --set-string orchestrator.repository="$GHCR_REPOSITORY" \
-            --set-string orchestrator.githubToken="$GHCR_TOKEN" \
-            --wait --timeout 15m
-          kubectl rollout status daemonset/fluentd --namespace observability --timeout=5m
+            --set-string orchestrator.githubToken= \
+            --wait --timeout "$PLATFORM_HELM_TIMEOUT"
+          bash .github/scripts/update-orchestrator-token.sh
+          kubectl rollout status daemonset/fluentd --namespace "$OBSERVABILITY_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
       - name: Upgrade Prometheus and Grafana through Helm
         run: |
-          helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+          helm upgrade --install "$MONITORING_RELEASE_NAME" prometheus-community/kube-prometheus-stack \
             --version "$PROMETHEUS_CHART_VERSION" \
-            --namespace observability --create-namespace \
-            --values helm/monitoring/values.yaml --wait --timeout 15m
+            --namespace "$OBSERVABILITY_NAMESPACE" --create-namespace \
+            --values helm/monitoring/values.yaml --wait --timeout "$PLATFORM_HELM_TIMEOUT"

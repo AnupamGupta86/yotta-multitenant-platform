@@ -17,41 +17,41 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
     runs-on: [self-hosted, macOS, yotta-local-k8s]
-    environment: platform
+    environment: platform-deployment
     permissions:
+      actions: write
       contents: read
       packages: read
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
       - name: Validate the selected image tag
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
-        run: |
-          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo 'image_tag must be a valid container image tag.' >&2
-            exit 2
-          fi
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
       - name: Confirm the local Kind cluster and platform are ready
         run: |
-          kind get clusters | grep -qx yotta-platform
-          helm status platform --namespace platform
+          kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
       - name: Authenticate to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+        run: printf '%s' "$GHCR_TOKEN" | docker login "$CONTAINER_REGISTRY" --username "$GHCR_USER" --password-stdin
       - name: Normalize image owner for GHCR
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          echo "IMAGE=ghcr.io/$owner/website-orchestrator:$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$WEBSITE_ORCHESTRATOR_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
       - name: Pull and load the selected website orchestrator image into Kind
         run: |
           docker pull "$IMAGE"
-          kind load docker-image "$IMAGE" --name yotta-platform
+          kind load docker-image "$IMAGE" --name "$KIND_CLUSTER_NAME"
       - name: Upgrade the deployment orchestrator with Helm
         env:
           GHCR_REPOSITORY: ${{ github.repository }}
@@ -61,9 +61,9 @@ jobs:
             echo 'Repository Actions secret GHCR_TOKEN is required.' >&2
             exit 2
           fi
-          helm upgrade --install platform helm/platform --namespace platform --reuse-values \
+          helm upgrade --install "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" --reuse-values \
             --set-string images.websiteOrchestrator="$IMAGE" \
             --set-string orchestrator.repository="$GHCR_REPOSITORY" \
-            --set-string orchestrator.githubToken="$GHCR_TOKEN" \
-            --wait --timeout 10m
-          kubectl rollout status deployment/website-orchestrator --namespace platform --timeout=5m
+            --set-string orchestrator.githubToken= \
+            --wait --timeout "$SERVICE_HELM_TIMEOUT"
+          bash .github/scripts/update-orchestrator-token.sh

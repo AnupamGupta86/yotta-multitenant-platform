@@ -11,10 +11,14 @@ on:
         description: Requested domain name
         type: string
         required: true
-      image:
-        description: Optional published website image override; defaults to the latest CI-published image
+      image_tag:
+        description: Exact published website-app image tag to deploy
         type: string
-        required: false
+        required: true
+      orchestrator_image_tag:
+        description: Exact published website-orchestrator image tag to use for deployment events
+        type: string
+        required: true
       correlation_id:
         description: Provisioning request event ID
         type: string
@@ -29,43 +33,50 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
     runs-on: [self-hosted, macOS, yotta-local-k8s]
+    environment: platform-deployment
+    timeout-minutes: 30
     env:
       TENANT: ${{ inputs.tenant }}
       DOMAIN: ${{ inputs.domain }}
-      IMAGE: ${{ inputs.image }}
-      IMAGE_OVERRIDE: ${{ inputs.image }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      ORCHESTRATOR_IMAGE_TAG: ${{ inputs.orchestrator_image_tag }}
       CORRELATION_ID: ${{ inputs.correlation_id || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Validate selected image tags
+        run: |
+          bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
+          bash .github/scripts/validate-image-tag.sh "$ORCHESTRATOR_IMAGE_TAG"
       - name: Confirm local Kind cluster and platform services
         run: |
-          kind get clusters | grep -qx yotta-platform
-          helm status platform --namespace platform
+          kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
       - name: Authenticate to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+        run: printf '%s' "$GHCR_TOKEN" | docker login "$CONTAINER_REGISTRY" --username "$GHCR_USER" --password-stdin
       - name: Normalize image owner for GHCR
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          if [[ -z "$IMAGE_OVERRIDE" ]]; then
-            echo "IMAGE=ghcr.io/$owner/website-app:latest" >> "$GITHUB_ENV"
-          fi
-          echo "ORCHESTRATOR_IMAGE=ghcr.io/$owner/website-orchestrator:latest" >> "$GITHUB_ENV"
-      - uses: actions/setup-python@v5
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$WEBSITE_APP_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "ORCHESTRATOR_IMAGE=$CONTAINER_REGISTRY/$owner/$WEBSITE_ORCHESTRATOR_IMAGE:$ORCHESTRATOR_IMAGE_TAG" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: ${{ steps.pipeline.outputs.python_version }}
       - name: Install Kafka event publisher
         run: python -m pip install --disable-pip-version-check -r services/website-orchestrator/requirements.txt
       - name: Open Kafka port-forward for deployment events
         run: |
-          kubectl port-forward --namespace platform service/kafka 19092:9092 > /tmp/kafka-port-forward.log 2>&1 &
+          kubectl port-forward --namespace "$PLATFORM_NAMESPACE" service/"$KAFKA_SERVICE_NAME" "${KAFKA_FORWARD_LOCAL_PORT}:${KAFKA_EXTERNAL_PORT}" > /tmp/kafka-port-forward.log 2>&1 &
           echo "$!" > /tmp/kafka-port-forward.pid
           for _ in {1..30}; do
-            if nc -z 127.0.0.1 19092; then exit 0; fi
+            if nc -z 127.0.0.1 "$KAFKA_FORWARD_LOCAL_PORT"; then exit 0; fi
             sleep 1
           done
           cat /tmp/kafka-port-forward.log
@@ -82,7 +93,7 @@ jobs:
             --tenant "$TENANT" --domain "$DOMAIN" --image "$IMAGE" \
             --event-type WebsiteDeploymentFailed --correlation-id "$CORRELATION_ID" \
             --error 'Helm rollout or deployment health check failed' \
-            --bootstrap-servers 127.0.0.1:19092
+            --bootstrap-servers "127.0.0.1:$KAFKA_FORWARD_LOCAL_PORT"
       - name: Stop Kafka port-forward
         if: always()
         run: |
@@ -98,9 +109,9 @@ jobs:
         run: |
           mkdir -p output
           kubectl get all,hpa,pdb,resourcequota,ingress --namespace "$TENANT" > "output/${TENANT}-resources.txt" 2>&1 || true
-          kubectl logs --namespace platform deployment/website-orchestrator --tail=100 > output/kafka-events.log 2>&1 || true
+          kubectl logs --namespace "$PLATFORM_NAMESPACE" deployment/"$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --tail=100 > output/kafka-events.log 2>&1 || true
           kubectl get pods --all-namespaces -o wide > output/cluster-pods.txt 2>&1 || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: website-deployment-evidence-${{ github.run_id }}

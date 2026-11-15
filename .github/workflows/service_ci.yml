@@ -16,7 +16,6 @@ on:
 permissions:
   contents: read
   packages: write
-  security-events: write
 concurrency:
   group: service-${{ inputs.service }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,14 +24,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: ${{ steps.pipeline.outputs.python_version }}
       - name: Install service and validation dependencies
         working-directory: services/${{ inputs.service }}
         run: |
@@ -51,16 +52,17 @@ jobs:
         working-directory: services/${{ inputs.service }}
         run: pip-audit -r requirements.txt --strict
       - name: Secret scan
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: 'false'
       - name: Dockerfile lint
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: services/${{ inputs.service }}/Dockerfile
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build container image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/${{ inputs.service }}
           load: true
@@ -81,12 +83,12 @@ jobs:
           docker network create service-test-network
           trap 'docker logs service-under-test 2>/dev/null || true; docker logs database-under-test 2>/dev/null || true; docker logs kafka-under-test 2>/dev/null || true; docker rm -f service-under-test database-under-test kafka-under-test >/dev/null 2>&1 || true; docker network rm service-test-network >/dev/null 2>&1 || true' EXIT
           docker run -d --name database-under-test --network service-test-network \
-            -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci postgres:16-alpine
+            -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci "$POSTGRES_CI_IMAGE"
           docker run -d --name kafka-under-test --network service-test-network \
             -e KAFKA_NODE_ID=1 \
             -e KAFKA_PROCESS_ROLES=broker,controller \
-            -e KAFKA_LISTENERS=CONTROLLER://:9093,INTERNAL://:19092 \
-            -e KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka-under-test:19092 \
+            -e "KAFKA_LISTENERS=CONTROLLER://:9093,INTERNAL://:$KAFKA_INTERNAL_PORT" \
+            -e "KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka-under-test:$KAFKA_INTERNAL_PORT" \
             -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT \
             -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
             -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-under-test:9093 \
@@ -94,20 +96,20 @@ jobs:
             -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
             -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
             -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
-            -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 apache/kafka:4.4.0
+            -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 "$KAFKA_CI_IMAGE"
           for _ in {1..30}; do
             if docker exec database-under-test pg_isready -U ci -d ci >/dev/null 2>&1; then break; fi
             sleep 1
           done
           docker exec database-under-test pg_isready -U ci -d ci
           for _ in {1..45}; do
-            if docker exec kafka-under-test /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list >/dev/null 2>&1; then break; fi
+            if docker exec kafka-under-test /opt/kafka/bin/kafka-topics.sh --bootstrap-server "localhost:$KAFKA_INTERNAL_PORT" --list >/dev/null 2>&1; then break; fi
             sleep 2
           done
-          docker exec kafka-under-test /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --create --if-not-exists --topic website-events --partitions 1 --replication-factor 1
+          docker exec kafka-under-test /opt/kafka/bin/kafka-topics.sh --bootstrap-server "localhost:$KAFKA_INTERNAL_PORT" --create --if-not-exists --topic website-events --partitions 1 --replication-factor 1
           docker run -d --name service-under-test --network service-test-network \
             -e DATABASE_URL=postgresql://ci:ci@database-under-test:5432/ci \
-            -e KAFKA_BOOTSTRAP_SERVERS=kafka-under-test:19092 \
+            -e "KAFKA_BOOTSTRAP_SERVERS=kafka-under-test:$KAFKA_INTERNAL_PORT" \
             local/${{ inputs.image }}:${{ github.sha }}
           for _ in {1..20}; do
             if docker exec service-under-test python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health/live', timeout=2)"; then exit 0; fi
@@ -125,27 +127,30 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - name: Calculate unique image version
         id: version
         run: |
           echo "version=$(./scripts/build-version.sh)" >> "$GITHUB_OUTPUT"
           echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
-          registry: ghcr.io
+          registry: ${{ steps.pipeline.outputs.container_registry }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ steps.version.outputs.owner }}/${{ inputs.image }}
+          images: ${{ steps.pipeline.outputs.container_registry }}/${{ steps.version.outputs.owner }}/${{ inputs.image }}
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
             type=sha,format=long
@@ -155,12 +160,25 @@ jobs:
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
       - name: Publish validated image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/${{ inputs.service }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.pipeline.outputs.image_build_platforms }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: true
           sbom: true
+      - name: Show the published image tag
+        env:
+          IMAGE_NAME: ${{ inputs.image }}
+          IMAGE_OWNER: ${{ steps.version.outputs.owner }}
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo '### Deployment image tag'
+            echo
+            echo "$IMAGE_TAG"
+            echo
+            echo "Full image: $CONTAINER_REGISTRY/$IMAGE_OWNER/$IMAGE_NAME:$IMAGE_TAG"
+          } >> "$GITHUB_STEP_SUMMARY"

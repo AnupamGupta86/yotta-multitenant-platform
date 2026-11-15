@@ -17,6 +17,7 @@ PROMETHEUS_TIMEOUT=15m
 PLATFORM_RELEASE=platform
 PLATFORM_CHART=helm/platform
 PLATFORM_NAMESPACE=platform
+ORCHESTRATOR_TOKEN_SECRET=orchestrator-github-token
 PLATFORM_TIMEOUT=15m
 WEBSITE_ORCHESTRATOR_DEPLOYMENT=website-orchestrator
 WEBSITE_ORCHESTRATOR_IMAGE=yotta/website-orchestrator:local
@@ -67,9 +68,14 @@ kind load docker-image "$WEBSITE_ORCHESTRATOR_IMAGE" --name "$cluster_name"
 helm upgrade --install "$PLATFORM_RELEASE" "$PLATFORM_CHART" \
   --namespace "$PLATFORM_NAMESPACE" --create-namespace --take-ownership \
   --set-string orchestrator.repository="$ORCHESTRATOR_REPOSITORY" \
-  --set-string orchestrator.githubToken="$ORCHESTRATOR_GITHUB_TOKEN" \
   --set-string notification.webhookUrl="$NOTIFICATION_WEBHOOK_URL" \
   --wait --timeout "$PLATFORM_TIMEOUT"
+printf '%s' "$ORCHESTRATOR_GITHUB_TOKEN" \
+  | kubectl create secret generic "$ORCHESTRATOR_TOKEN_SECRET" \
+      --namespace "$PLATFORM_NAMESPACE" --from-file=token=/dev/stdin \
+      --dry-run=client -o yaml \
+  | kubectl apply -f -
+kubectl rollout restart deployment/website-orchestrator --namespace "$PLATFORM_NAMESPACE"
 kubectl rollout status "deployment/$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --namespace "$PLATFORM_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
 echo "Platform is ready. Deploy Day 0 with the Provisioning API GitHub Actions workflow."
 echo "Kind platform is ready on HTTPS port 8443. Run: kubectl port-forward -n $GRAFANA_NAMESPACE svc/$GRAFANA_SERVICE $GRAFANA_LOCAL_PORT:$GRAFANA_SERVICE_PORT"

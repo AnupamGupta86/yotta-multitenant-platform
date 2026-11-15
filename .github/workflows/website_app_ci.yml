@@ -12,6 +12,8 @@ on:
       - '.github/workflows/website_app_ci.yml'
       - '.github/workflows/website_app_cd.yml'
       - '.github/workflows/service_ci.yml'
+      - '.github/pipeline-config.env'
+      - '.github/scripts/**'
   pull_request:
     branches: [master, feature, 'feature/**']
     paths:
@@ -23,22 +25,28 @@ on:
       - '.github/workflows/website_app_ci.yml'
       - '.github/workflows/website_app_cd.yml'
       - '.github/workflows/service_ci.yml'
+      - '.github/pipeline-config.env'
+      - '.github/scripts/**'
   workflow_dispatch:
 permissions:
   contents: read
   packages: write
-  security-events: write
 jobs:
   chart-validation:
     if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: azure/setup-helm@v4
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: azure/setup-helm@v5
         with:
-          version: v3.17.3
+          version: ${{ steps.pipeline.outputs.helm_version }}
       - name: Lint and render the website chart
         run: |
           helm lint helm/website
@@ -46,11 +54,11 @@ jobs:
           helm template user1 helm/website --namespace user1 \
             --set tenant.name=user1 --set ingress.host=user1.localtest.me \
             --set eventPublisher.enabled=true > /tmp/rendered-manifests/website.yaml
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.24.x'
+          go-version: ${{ steps.pipeline.outputs.go_version }}
       - name: Install Kubernetes manifest validator
-        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
       - name: Validate rendered website resources
         run: kubeconform -strict -ignore-missing-schemas /tmp/rendered-manifests/website.yaml
       - name: Scan rendered website resources for security issues
@@ -64,6 +72,9 @@ jobs:
   build-and-validate:
     if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
     needs: chart-validation
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/service_ci.yml
     with:
       service: website-app

@@ -16,6 +16,8 @@ on:
       - '.trivyignore'
       - '.github/workflows/platform_ci.yml'
       - '.github/workflows/platform_cd.yml'
+      - '.github/pipeline-config.env'
+      - '.github/scripts/**'
   pull_request:
     branches: [master, feature, 'feature/**']
     paths:
@@ -31,22 +33,28 @@ on:
       - '.trivyignore'
       - '.github/workflows/platform_ci.yml'
       - '.github/workflows/platform_cd.yml'
+      - '.github/pipeline-config.env'
+      - '.github/scripts/**'
   workflow_dispatch:
 permissions:
   contents: read
   packages: write
-  security-events: write
 jobs:
   validate:
     if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: azure/setup-helm@v4
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: azure/setup-helm@v5
         with:
-          version: v3.17.3
+          version: ${{ steps.pipeline.outputs.helm_version }}
       - name: Add and update Helm repositories
         run: |
           helm repo add projectcalico https://docs.tigera.io/calico/charts
@@ -58,7 +66,14 @@ jobs:
         run: |
           helm lint helm/platform
           mkdir -p /tmp/rendered-platform /tmp/rendered-monitoring
-          helm template platform helm/platform --namespace platform > /tmp/rendered-platform/platform.yaml
+          helm template "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" > /tmp/rendered-platform/platform.yaml
+          awk '
+            /^  fluent.conf: \|$/ { in_config = 1; found = 1; next }
+            in_config && /^    / { sub(/^    /, ""); print; next }
+            in_config { exit }
+            END { if (!found) exit 1 }
+          ' /tmp/rendered-platform/platform.yaml > /tmp/fluent.conf
+          test -s /tmp/fluent.conf
           chart_version="$(tr -d '[:space:]' < helm/monitoring/chart-version.txt)"
           mkdir -p /tmp/monitoring-chart
           helm pull prometheus-community/kube-prometheus-stack \
@@ -66,7 +81,7 @@ jobs:
           helm lint /tmp/monitoring-chart/kube-prometheus-stack \
             --values helm/monitoring/values.yaml
           helm template prometheus /tmp/monitoring-chart/kube-prometheus-stack \
-            --namespace observability --values helm/monitoring/values.yaml \
+            --namespace "$OBSERVABILITY_NAMESPACE" --values helm/monitoring/values.yaml \
             > /tmp/rendered-monitoring/prometheus.yaml
       - name: Render pinned cluster add-on Helm charts
         run: |
@@ -95,11 +110,11 @@ jobs:
             --version "$CERT_MANAGER_VERSION" --namespace cert-manager \
             --set crds.enabled=true \
             > /tmp/rendered-addons/cert-manager.yaml
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.24.x'
+          go-version: ${{ steps.pipeline.outputs.go_version }}
       - name: Install Kubernetes manifest validator
-        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
       - name: Validate rendered platform and monitoring resources
         run: kubeconform -strict -ignore-missing-schemas /tmp/rendered-platform/*.yaml /tmp/rendered-monitoring/*.yaml /tmp/rendered-addons/*.yaml
       - name: Scan project platform resources for security misconfigurations
@@ -123,24 +138,24 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: helm/monitoring/fluentd/Dockerfile
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build Fluentd image for validation
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: helm/monitoring/fluentd
           load: true
-          tags: local/yotta/fluentd-loki:${{ github.sha }}
+          tags: local/yotta/${{ steps.pipeline.outputs.fluentd_image_name }}:${{ github.sha }}
       - name: Validate Fluentd image and mounted configuration
         run: |
           docker run --rm \
-            -v "$GITHUB_WORKSPACE/helm/platform/files/fluent.conf:/fluentd/etc/fluent.conf:ro" \
+            -v /tmp/fluent.conf:/fluentd/etc/fluent.conf:ro \
             -v /tmp:/var/log/fluentd \
-            local/yotta/fluentd-loki:${{ github.sha }} \
+            local/yotta/${{ steps.pipeline.outputs.fluentd_image_name }}:${{ github.sha }} \
             fluentd --dry-run -c /fluentd/etc/fluent.conf
       - name: Scan Fluentd image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: local/yotta/fluentd-loki:${{ github.sha }}
+          image-ref: local/yotta/${{ steps.pipeline.outputs.fluentd_image_name }}:${{ github.sha }}
           trivyignores: .trivyignore
           format: table
           exit-code: '1'
@@ -158,30 +173,46 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       owner: ${{ steps.version.outputs.owner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - name: Calculate unique image version
         id: version
         run: |
           echo "version=$(./scripts/build-version.sh)" >> "$GITHUB_OUTPUT"
           echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
       - name: Authenticate to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
-          registry: ghcr.io
+          registry: ${{ steps.pipeline.outputs.container_registry }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish Fluentd image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: helm/monitoring/fluentd
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.pipeline.outputs.image_build_platforms }}
           push: true
           tags: |
-            ghcr.io/${{ steps.version.outputs.owner }}/fluentd-loki:${{ steps.version.outputs.version }}
-            ghcr.io/${{ steps.version.outputs.owner }}/fluentd-loki:${{ github.sha }}
+            ${{ steps.pipeline.outputs.container_registry }}/${{ steps.version.outputs.owner }}/${{ steps.pipeline.outputs.fluentd_image_name }}:${{ steps.version.outputs.version }}
+            ${{ steps.pipeline.outputs.container_registry }}/${{ steps.version.outputs.owner }}/${{ steps.pipeline.outputs.fluentd_image_name }}:${{ github.sha }}
           provenance: true
           sbom: true
+      - name: Show the published Fluentd image tag
+        env:
+          IMAGE_OWNER: ${{ steps.version.outputs.owner }}
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo '### Deployment image tag'
+            echo
+            echo "$IMAGE_TAG"
+            echo
+            echo 'Enter this value in the image_tag field of the Platform Deployment workflow.'
+            echo "Full image: $CONTAINER_REGISTRY/$IMAGE_OWNER/$FLUENTD_IMAGE_NAME:$IMAGE_TAG"
+          } >> "$GITHUB_STEP_SUMMARY"

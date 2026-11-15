@@ -51,7 +51,6 @@ orchestrator:
   repository: ""
   workflow: website_app_cd.yml
   ref: master
-  githubToken: ""
   kafkaTopic: website-events
   kafkaGroupId: deployment-orchestrator
   imagePullPolicy: IfNotPresent
