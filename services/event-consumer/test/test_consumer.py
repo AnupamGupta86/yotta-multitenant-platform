@@ -28,14 +28,14 @@ class DeploymentOrchestratorTests(unittest.TestCase):
         environ = {
             "GH_TOKEN": "test-token",
             "GH_REPOSITORY": "example/platform",
-            "GH_WORKFLOW_NAME": "deployment.yml",
+            "GH_WORKFLOW_NAME": "website-app-deploy.yml",
             "GH_REF": "master",
         }
         with patch("src.consumer.urlopen", return_value=Response()) as open_url:
             dispatch_website(self.event, environ)
 
         request = open_url.call_args.args[0]
-        self.assertEqual(request.full_url, "https://api.github.com/repos/example/platform/actions/workflows/deployment.yml/dispatches")
+        self.assertEqual(request.full_url, "https://api.github.com/repos/example/platform/actions/workflows/website-app-deploy.yml/dispatches")
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
         self.assertEqual(request.get_header("User-agent"), "yotta-deployment-orchestrator")

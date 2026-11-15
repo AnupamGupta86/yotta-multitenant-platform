@@ -2,10 +2,10 @@ name: Kafka event consumer
 on:
   push:
     branches: [master, feature, 'feature/**']
-    paths: ['services/event-consumer/**', 'docker-compose.yml', 'VERSION', '.github/workflows/event-consumer.yml']
+    paths: ['services/event-consumer/**', 'docker-compose.yml', 'VERSION', 'scripts/build-version.sh', '.trivyignore', '.github/workflows/event-consumer.yml']
   pull_request:
     branches: [master, feature, 'feature/**']
-    paths: ['services/event-consumer/**', 'docker-compose.yml', 'VERSION', '.github/workflows/event-consumer.yml']
+    paths: ['services/event-consumer/**', 'docker-compose.yml', 'VERSION', 'scripts/build-version.sh', '.trivyignore', '.github/workflows/event-consumer.yml']
   workflow_dispatch:
 permissions:
   contents: read

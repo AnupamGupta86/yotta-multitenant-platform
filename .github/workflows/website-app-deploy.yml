@@ -1,0 +1,101 @@
+name: Website App Deployment
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: DNS-safe tenant name from the provisioning request
+        type: string
+        required: true
+      domain:
+        description: Requested domain name
+        type: string
+        required: true
+      image:
+        description: Optional published website image override; defaults to the latest CI-published image
+        type: string
+        required: false
+      correlation_id:
+        description: Provisioning request event ID
+        type: string
+        required: false
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: local-platform-release
+  cancel-in-progress: false
+jobs:
+  deploy-tenant:
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    env:
+      TENANT: ${{ inputs.tenant }}
+      DOMAIN: ${{ inputs.domain }}
+      IMAGE: ${{ inputs.image || format('ghcr.io/{0}/website-api:latest', github.repository_owner) }}
+      EVENT_IMAGE: ghcr.io/${{ github.repository_owner }}/website-event-consumer:latest
+      CORRELATION_ID: ${{ inputs.correlation_id || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Confirm local Kind cluster and platform services
+        run: |
+          kind get clusters | grep -qx yotta-platform
+          helm status platform --namespace platform
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Kafka event publisher
+        run: python -m pip install --disable-pip-version-check -r services/event-consumer/requirements.txt
+      - name: Open Kafka port-forward for deployment events
+        run: |
+          kubectl port-forward --namespace platform service/kafka 19092:9092 > /tmp/kafka-port-forward.log 2>&1 &
+          echo "$!" > /tmp/kafka-port-forward.pid
+          for _ in {1..30}; do
+            if nc -z 127.0.0.1 19092; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/kafka-port-forward.log
+          echo 'Kafka port-forward did not become ready.' >&2
+          exit 1
+      - name: Deploy the requested tenant with Helm
+        id: deploy
+        continue-on-error: true
+        run: ./scripts/deploy-tenant.sh "$TENANT" "$DOMAIN" "$IMAGE" "$EVENT_IMAGE" "$CORRELATION_ID"
+      - name: Publish deployment failure event
+        if: steps.deploy.outcome == 'failure'
+        run: |
+          python services/event-consumer/publish_event.py \
+            --tenant "$TENANT" --domain "$DOMAIN" --image "$IMAGE" \
+            --event-type WebsiteDeploymentFailed --correlation-id "$CORRELATION_ID" \
+            --error 'Helm rollout or deployment health check failed' \
+            --bootstrap-servers 127.0.0.1:19092
+      - name: Stop Kafka port-forward
+        if: always()
+        run: |
+          if [[ -f /tmp/kafka-port-forward.pid ]]; then
+            kill "$(cat /tmp/kafka-port-forward.pid)" 2>/dev/null || true
+            rm -f /tmp/kafka-port-forward.pid
+          fi
+      - name: Fail the workflow when Helm deployment failed
+        if: steps.deploy.outcome == 'failure'
+        run: exit 1
+      - name: Capture deployment evidence
+        if: always()
+        run: |
+          mkdir -p output
+          kubectl get all,hpa,pdb,resourcequota,ingress --namespace "$TENANT" > "output/${TENANT}-resources.txt" 2>&1 || true
+          kubectl logs --namespace platform deployment/event-consumer --tail=100 > output/kafka-events.log 2>&1 || true
+          kubectl get pods --all-namespaces -o wide > output/cluster-pods.txt 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: website-deployment-evidence-${{ github.run_id }}
+          path: output/
+          if-no-files-found: warn
+          retention-days: 14

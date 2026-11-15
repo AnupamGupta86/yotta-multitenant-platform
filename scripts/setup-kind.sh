@@ -16,42 +16,13 @@ elif kubectl get daemonset calico-node --namespace kube-system >/dev/null 2>&1 &
 fi
 kubectl cluster-info --context kind-yotta-platform
 
-helm repo add projectcalico https://docs.tigera.io/calico/charts --force-update
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
-helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ --force-update
 helm repo update
 
-helm upgrade --install calico-crds projectcalico/projectcalico.org.v3 \
-  --version v3.33.0 --namespace tigera-operator --create-namespace \
-  --take-ownership --wait --timeout 10m
-helm upgrade --install calico projectcalico/tigera-operator \
-  --version v3.33.0 --namespace tigera-operator \
-  --set 'installation.calicoNetwork.ipPools[0].cidr=192.168.0.0/16' \
-  --wait --timeout 10m
-kubectl rollout status daemonset/calico-node --namespace calico-system --timeout=10m
-kubectl wait --for=condition=Ready nodes --all --timeout=10m
-
-helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-  --namespace ingress-nginx --create-namespace --wait --timeout 10m \
-  --set controller.kind=DaemonSet \
-  --set controller.hostPort.enabled=true \
-  --set-string controller.nodeSelector.ingress-ready=true \
-  --set-json 'controller.tolerations=[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]' \
-  --set controller.service.type=ClusterIP \
-  --take-ownership
-
-helm upgrade --install metrics-server metrics-server/metrics-server \
-  --namespace kube-system --set-string 'args[0]=--kubelet-insecure-tls' \
-  --take-ownership --wait --timeout 5m
-kubectl rollout status deployment/metrics-server --namespace kube-system --timeout=5m
-
-helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
-  --version v1.21.3 --namespace cert-manager --create-namespace \
-  --set crds.enabled=true --wait --timeout 10m
-kubectl wait --for=condition=Available deployment --all --namespace cert-manager --timeout=5m
+./scripts/deploy-cluster-addons.sh
 helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
   --namespace observability --create-namespace \
+  --version "$(tr -d '[:space:]' < helm/monitoring/chart-version.txt)" \
   --values helm/monitoring/values.yaml --wait --timeout 15m
 
 docker build -t yotta/fluentd-loki:local -f helm/monitoring/fluentd/Dockerfile helm/monitoring/fluentd

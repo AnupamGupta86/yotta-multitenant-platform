@@ -16,7 +16,7 @@ The setup script installs cluster add-ons through Helm and installs the platform
 
 ## 2. Install the Day 0 Provisioning API
 
-From GitHub Actions, run **Website Provisioning Day 0** on `master`. The workflow validates the dedicated chart, validates and publishes the Python image, then installs or upgrades the `website-provisioning` Helm release into the `platform` namespace on the Mac runner. Changes to the service or its chart trigger the same deployment automatically when pushed to `master`.
+From GitHub Actions, run **Website Provisioning Deployment** on `master` and provide the published `image_tag`. The workflow validates the chart, then pulls the selected image and installs or upgrades the `website-provisioning` Helm release in the `platform` namespace on the self-hosted Mac runner. Changes to the service run CI and publish an image; deployment remains manual.
 
 The provisioning release owns a separate PostgreSQL StatefulSet, persistent volume, and random password Secret. If your Kind cluster has no default storage class, set one in the chart values before installing it.
 
@@ -36,9 +36,9 @@ curl -i -X POST http://127.0.0.1:3001/api/v1/websites \
   -d '{"tenant":"user4","domain":"user4.localtest.me"}'
 ```
 
-The API returns `202 Accepted` and an event ID. It stores the request before publishing `WebsiteProvisioningRequested`. The orchestrator consumes that event and starts the deployment workflow.
+The API returns `202 Accepted` and an event ID. It stores the request before publishing `WebsiteProvisioningRequested`. The orchestrator consumes that event and dispatches **Website App Deployment**.
 
-The orchestrator dispatches the `deployment.yml` GitHub Actions workflow. That workflow validates the chart and website image, then runs Helm on the Mac. It adds the requested domain as an Ingress host without recreating the cluster.
+Website API CI validates and publishes the website image. The request-triggered `website-app-deploy.yml` workflow receives the tenant, domain, image override, and correlation ID, then runs Helm on the self-hosted Mac runner. It uses the latest CI-published website image when no image override is supplied and adds the requested domain as an Ingress host without recreating the cluster.
 
 ## 4. Check the result
 
@@ -68,7 +68,7 @@ The service pipeline runs Python lint and unit tests, Bandit checks for risky co
 
 Each pushed image is tagged `major.minor.patch-UTCtimestamp-run<GitHub run ID>`, for example `1.0.0-20261115040530-run123456789`. Update the repository's `VERSION` file to change the major, minor, or patch part.
 
-The deployment pipelines lint and render the Helm charts, validate their Kubernetes resources with Kubeconform, and scan the rendered resources for high-risk security settings. Trivy's image scan reports a false positive for setuptools 70.3.0 from a replaced image layer; the final image contains fixed setuptools 80.10.2. That one advisory is documented in `.trivyignore`; other high and critical image findings still fail CI.
+The platform workflow renders and schema-validates the pinned cluster add-on charts, the platform chart, and the pinned Prometheus/Grafana chart. It scans project-managed platform resources, scans Fluentd's image, then deploys cluster add-ons, the platform release, and monitoring through Helm on the Mac runner. Website App Deployment and Website Provisioning Deployment also target the self-hosted Mac runner and use Helm for Kubernetes changes. The monitoring chart's remaining inherited Trivy findings are listed with reasons in [helm/monitoring/trivyignore](/Users/ashagupta/yotta-multitenant-platform/helm/monitoring/trivyignore). The CI workflows lint and render tenant and provisioning charts, validate their Kubernetes resources with Kubeconform, and scan rendered resources for high-risk security settings. Trivy's image scan reports a false positive for setuptools 70.3.0 from a replaced image layer; the final image contains fixed setuptools 80.10.2. That one advisory is documented in `.trivyignore`; other high and critical image findings still fail CI.
 
 ## Scaling demo
 

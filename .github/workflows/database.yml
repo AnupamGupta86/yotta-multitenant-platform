@@ -6,10 +6,10 @@ permissions:
 on:
   push:
     branches: [master, feature, 'feature/**']
-    paths: ['services/database/**', 'VERSION', '.github/workflows/**']
+    paths: ['services/database/**', 'VERSION', 'scripts/build-version.sh', '.trivyignore', '.github/workflows/**']
   pull_request:
     branches: [master, feature, 'feature/**']
-    paths: ['services/database/**', 'VERSION', '.github/workflows/**']
+    paths: ['services/database/**', 'VERSION', 'scripts/build-version.sh', '.trivyignore', '.github/workflows/**']
   workflow_dispatch:
 jobs:
   service:

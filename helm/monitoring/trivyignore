@@ -1,0 +1,9 @@
+# Accepted findings from the pinned kube-prometheus-stack 93.3.0 chart.
+# The Prometheus Operator needs cluster-wide secret reads and service/endpoint
+# reconciliation to discover Prometheus resources and keep scrape targets current.
+KSV-0041
+KSV-0056
+# The chart's admission controller updates its own validating/mutating webhooks.
+KSV-0114
+# Node Exporter reads host /, /proc, and /sys to expose node-level metrics.
+KSV-0121

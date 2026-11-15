@@ -1,10 +1,12 @@
-name: Website Provisioning Day 0
+name: Website Provisioning API CI
 on:
   push:
     branches: [master, feature, 'feature/**']
     paths:
       - 'services/website-provisioning/**'
       - 'VERSION'
+      - 'scripts/build-version.sh'
+      - '.trivyignore'
       - 'helm/website-provisioning/**'
       - '.github/workflows/website-provisioning.yml'
       - '.github/workflows/service-ci.yml'
@@ -13,6 +15,8 @@ on:
     paths:
       - 'services/website-provisioning/**'
       - 'VERSION'
+      - 'scripts/build-version.sh'
+      - '.trivyignore'
       - 'helm/website-provisioning/**'
       - '.github/workflows/website-provisioning.yml'
       - '.github/workflows/service-ci.yml'
@@ -62,36 +66,3 @@ jobs:
     with:
       service: website-provisioning
       image: website-provisioning
-  deploy-day0:
-    needs: [chart-validation, service]
-    if: needs.service.result == 'success' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))))
-    runs-on: [self-hosted, macOS, yotta-local-k8s]
-    permissions:
-      contents: read
-      packages: read
-    env:
-      PROVISIONING_IMAGE: ghcr.io/${{ github.repository_owner }}/website-provisioning:${{ needs.service.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Confirm the platform is installed
-        run: helm status platform --namespace platform
-      - name: Authenticate to GitHub Container Registry
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
-      - name: Load the validated API image into Kind
-        run: |
-          docker pull "$PROVISIONING_IMAGE"
-          kind load docker-image "$PROVISIONING_IMAGE" --name yotta-platform
-      - name: Install or upgrade the Day 0 Helm release
-        run: |
-          image_tag="${PROVISIONING_IMAGE##*:}"
-          helm upgrade --install website-provisioning helm/website-provisioning \
-            --namespace platform \
-            --set-string image.repository="${PROVISIONING_IMAGE%:*}" \
-            --set-string image.tag="$image_tag" \
-            --wait --timeout 10m
-          kubectl rollout status deployment/website-provisioning --namespace platform --timeout=5m

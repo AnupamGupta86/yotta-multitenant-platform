@@ -6,7 +6,7 @@ A small Python-based platform for running isolated customer websites. Each tenan
 
 1. A user submits a tenant name and domain to the Provisioning API.
 2. The FastAPI service validates the request, saves it in PostgreSQL, and publishes `WebsiteProvisioningRequested` to Kafka.
-3. The deployment orchestrator consumes that event and starts the GitHub Actions deployment workflow.
+3. The deployment orchestrator consumes that event and dispatches the website-app deployment pipeline.
 4. GitHub Actions installs or upgrades the website with Helm on the Mac's Kind cluster.
 5. The workflow checks the HTTPS health endpoint. A successful Helm test publishes `WebsiteCreated`. If deployment fails, Helm rolls back and the workflow publishes `WebsiteDeploymentFailed`.
 6. The lifecycle consumer logs a human-readable notification and can forward it to a configured webhook.
@@ -25,7 +25,7 @@ export ORCHESTRATOR_GITHUB_TOKEN=your-fine-grained-token
 
 The token is stored in the platform's Kubernetes Secret so the in-cluster orchestrator can dispatch workflows. For a production cluster, use an external secret manager instead of Helm values.
 
-After the cluster is ready, run **Actions → Website Provisioning Day 0 → Run workflow** from `master`. This separately installs the provisioning API and its database. Pushes to `master` that change the API or its Helm chart also upgrade this Day 0 release automatically on the Mac runner.
+After the cluster is ready, run **Actions → Website Provisioning Deployment → Run workflow** from `master` and provide the published `image_tag`. This separately installs or upgrades the provisioning API and its database. Changes to the service still run its CI checks and publish an image, but do not deploy it automatically.
 
 ## Submit a website request
 
@@ -70,7 +70,7 @@ python3 scripts/load_test.py --tenant user1 --seconds 180 --workers 40
 
 ## CI/CD and local deployment
 
-Service workflows validate and publish Python service images on `master` and feature branches. Each published image gets a unique UTC timestamp tag down to seconds plus the GitHub run ID, while commit tags remain available for tracing. Pull requests run the same validation without publishing. The website deployment workflow deploys sample tenants on `master`; the orchestrator starts that workflow for submitted requests. The Provisioning API has a separate Day 0 workflow.
+Service workflows validate and publish Python service images on `master` and feature branches. Each published image gets a unique UTC timestamp tag down to seconds plus the GitHub run ID, while commit tags remain available for tracing. Pull requests run the same validation without publishing. Website API CI builds and publishes the app image; a separate website-app deployment pipeline runs on the Mac only after a website request is accepted by Kafka. Provisioning deployment is manual and accepts a selected published image tag. The Platform and monitoring workflow validates and deploys the pinned cluster add-on charts, platform chart, Fluentd image, and Prometheus/Grafana release through Helm.
 
 CI checks Python style and unit tests, scans Python code and dependencies, checks for committed secrets, lints Dockerfiles, scans built images, and starts each API image against PostgreSQL to check its health endpoint. The Kafka workflow also sends an event through a real local broker. Helm charts are linted, rendered, checked against Kubernetes schemas, and scanned for deployment security settings.
 
