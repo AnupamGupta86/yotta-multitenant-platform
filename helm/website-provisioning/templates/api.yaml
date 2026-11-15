@@ -27,7 +27,7 @@ spec:
             - name: DB_PASSWORD
               valueFrom: {secretKeyRef: {name: provisioning-db-credentials, key: password}}
             - name: DATABASE_URL
-              value: postgresql://provisioning:$(DB_PASSWORD)@provisioning-postgres:5432/provisioning
+              value: postgresql://provisioning:$(DB_PASSWORD)@website-provisioning-postgres:5432/provisioning
           ports: [{name: http, containerPort: {{ .Values.api.port }}}]
           livenessProbe:
             httpGet: {path: /health/live, port: http}
