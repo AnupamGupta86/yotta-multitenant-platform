@@ -1,4 +1,4 @@
-name: Website Provisioning API CI
+name: Website Provisioning CI
 on:
   push:
     branches: [master, feature, 'feature/**']

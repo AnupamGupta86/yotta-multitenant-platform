@@ -1,0 +1,68 @@
+name: Website Provisioning CI
+on:
+  push:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'services/website-provisioning/**'
+      - 'VERSION'
+      - 'scripts/build-version.sh'
+      - '.trivyignore'
+      - 'helm/website-provisioning/**'
+      - '.github/workflows/website-provisioning.yml'
+      - '.github/workflows/service-ci.yml'
+  pull_request:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'services/website-provisioning/**'
+      - 'VERSION'
+      - 'scripts/build-version.sh'
+      - '.trivyignore'
+      - 'helm/website-provisioning/**'
+      - '.github/workflows/website-provisioning.yml'
+      - '.github/workflows/service-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+concurrency:
+  group: local-platform-release
+  cancel-in-progress: false
+jobs:
+  chart-validation:
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Lint and render the Day 0 chart
+        run: |
+          helm lint helm/website-provisioning
+          mkdir -p /tmp/rendered-manifests
+          helm template website-provisioning helm/website-provisioning --namespace platform > /tmp/rendered-manifests/website-provisioning.yaml
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: Validate rendered resources
+        run: kubeconform -strict -ignore-missing-schemas /tmp/rendered-manifests/website-provisioning.yaml
+      - name: Scan rendered Kubernetes resources for security misconfigurations
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: /tmp/rendered-manifests
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+  service:
+    needs: chart-validation
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    uses: ./.github/workflows/service-ci.yml
+    with:
+      service: website-provisioning
+      image: website-provisioning
