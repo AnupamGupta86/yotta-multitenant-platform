@@ -1,6 +1,7 @@
 import unittest
 
 from fastapi.testclient import TestClient
+
 from src.app import RequestConflict, create_app
 
 

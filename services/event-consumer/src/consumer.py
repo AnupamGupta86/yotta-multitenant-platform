@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -51,7 +51,8 @@ def dispatch_website(event, environ=None):
         method="POST",
     )
     try:
-        with urlopen(request, timeout=20) as response:
+        # This request always targets the fixed HTTPS GitHub API endpoint.
+        with urlopen(request, timeout=20) as response:  # nosec B310
             if response.status != 204:
                 raise RuntimeError(f"GitHub accepted an unexpected status: {response.status}")
     except HTTPError as error:
@@ -77,6 +78,9 @@ def notify_outcome(event, environ=None):
     if not webhook_url:
         logger.info("NOTIFICATION: %s", message)
         return
+    parsed_webhook_url = urlsplit(webhook_url)
+    if parsed_webhook_url.scheme != "https" or not parsed_webhook_url.netloc:
+        raise RuntimeError("NOTIFICATION_WEBHOOK_URL must be an absolute HTTPS URL")
 
     request = Request(
         webhook_url,
@@ -85,7 +89,8 @@ def notify_outcome(event, environ=None):
         method="POST",
     )
     try:
-        with urlopen(request, timeout=10) as response:
+        # The webhook URL is restricted to HTTPS above.
+        with urlopen(request, timeout=10) as response:  # nosec B310
             if not 200 <= response.status < 300:
                 raise RuntimeError(f"Notification webhook returned HTTP {response.status}")
     except HTTPError as error:

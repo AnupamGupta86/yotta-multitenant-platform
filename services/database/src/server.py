@@ -15,7 +15,8 @@ def main():
     if not os.environ.get("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL is required")
     port = int(os.environ.get("PORT", "3000"))
-    server = ThreadingHTTPServer(("0.0.0.0", port), create_handler(ping_database))
+    host = os.environ.get("HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((host, port), create_handler(ping_database))
     print(f"database-api listening on {port}", flush=True)
     try:
         server.serve_forever()

@@ -112,6 +112,16 @@ class DeploymentOrchestratorTests(unittest.TestCase):
         self.assertEqual(request.full_url, "https://hooks.example.test/events")
         self.assertIn(b"Deployment failed for user2", request.data)
 
+    def test_outcome_rejects_non_https_webhook_url(self):
+        with patch("src.consumer.urlopen") as open_url, self.assertRaisesRegex(
+            RuntimeError, "absolute HTTPS URL"
+        ):
+            notify_outcome(
+                {"event_type": "WebsiteCreated", "tenant": "user2", "domain": "shop.example.com"},
+                {"NOTIFICATION_WEBHOOK_URL": "file:///tmp/webhook"},
+            )
+        open_url.assert_not_called()
+
     def test_unknown_event_is_acknowledged_without_notification(self):
         handle_event(
             {"event_type": "OtherEvent"},
