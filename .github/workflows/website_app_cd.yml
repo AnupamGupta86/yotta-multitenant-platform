@@ -1,4 +1,4 @@
-# No-op change to allow workflow-triggering commits.
+# CI retrigger marker: 2026-11-15.
 name: Website App Deployment
 on:
   workflow_dispatch:
@@ -54,12 +54,12 @@ jobs:
           if [[ -z "$IMAGE_OVERRIDE" ]]; then
             echo "IMAGE=ghcr.io/$owner/website-app:latest" >> "$GITHUB_ENV"
           fi
-          echo "EVENT_IMAGE=ghcr.io/$owner/website-event-consumer:latest" >> "$GITHUB_ENV"
+          echo "ORCHESTRATOR_IMAGE=ghcr.io/$owner/website-orchestrator:latest" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install Kafka event publisher
-        run: python -m pip install --disable-pip-version-check -r services/event-consumer/requirements.txt
+        run: python -m pip install --disable-pip-version-check -r services/website-orchestrator/requirements.txt
       - name: Open Kafka port-forward for deployment events
         run: |
           kubectl port-forward --namespace platform service/kafka 19092:9092 > /tmp/kafka-port-forward.log 2>&1 &
@@ -74,11 +74,11 @@ jobs:
       - name: Deploy the requested tenant with Helm
         id: deploy
         continue-on-error: true
-        run: ./scripts/deploy-tenant.sh "$TENANT" "$DOMAIN" "$IMAGE" "$EVENT_IMAGE" "$CORRELATION_ID"
+        run: ./scripts/deploy-tenant.sh "$TENANT" "$DOMAIN" "$IMAGE" "$ORCHESTRATOR_IMAGE" "$CORRELATION_ID"
       - name: Publish deployment failure event
         if: steps.deploy.outcome == 'failure'
         run: |
-          python services/event-consumer/publish_event.py \
+          python services/website-orchestrator/publish_event.py \
             --tenant "$TENANT" --domain "$DOMAIN" --image "$IMAGE" \
             --event-type WebsiteDeploymentFailed --correlation-id "$CORRELATION_ID" \
             --error 'Helm rollout or deployment health check failed' \
@@ -98,7 +98,7 @@ jobs:
         run: |
           mkdir -p output
           kubectl get all,hpa,pdb,resourcequota,ingress --namespace "$TENANT" > "output/${TENANT}-resources.txt" 2>&1 || true
-          kubectl logs --namespace platform deployment/event-consumer --tail=100 > output/kafka-events.log 2>&1 || true
+          kubectl logs --namespace platform deployment/website-orchestrator --tail=100 > output/kafka-events.log 2>&1 || true
           kubectl get pods --all-namespaces -o wide > output/cluster-pods.txt 2>&1 || true
       - uses: actions/upload-artifact@v4
         if: always()

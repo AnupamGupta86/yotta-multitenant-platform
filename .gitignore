@@ -5,4 +5,6 @@ __pycache__/
 .env.*
 *.log
 output/
-self-hosted/
+self-hosted/*
+!self-hosted/
+!self-hosted/self-hosted.sh

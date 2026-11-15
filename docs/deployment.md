@@ -1,5 +1,17 @@
 # Deployment guide
 
+## One-command local setup
+
+For a complete local Kind setup, run this from the repository root:
+
+```sh
+./scripts/e2e-setup.sh
+```
+
+The utility creates a fresh `yotta-platform` Kind cluster, installs cluster add-ons, monitoring, and the platform, then builds and deploys the local Provisioning API and a sample tenant (`user1` at `user1.myyotta.com`). If that cluster already exists, the script warns that its workloads and demo data will be deleted and requires you to type `delete yotta-platform`; a non-interactive run refuses to delete it. The script derives `ORCHESTRATOR_REPOSITORY` from the `origin` Git remote and securely prompts for `ORCHESTRATOR_GITHUB_TOKEN` when it is not already set. Use a fine-grained token with Actions read/write access. To choose another tenant and domain, pass both values, for example `./scripts/e2e-setup.sh user2 user2.myyotta.com`.
+
+The utility does not edit `/etc/hosts`; add the line it prints after setup if the hostnames do not resolve locally. It also does not register a GitHub Actions runner. The existing manual setup and GitHub Actions deployment steps follow below for teams using published images or remote deployments.
+
 ## 1. Prepare the Mac runner and cluster
 
 Install Docker Desktop, Kind, kubectl, Helm 3.17+, Python 3.12+, and a self-hosted GitHub Actions runner. Add the runner label `yotta-local-k8s`.
@@ -45,19 +57,19 @@ Website App CI validates and publishes the website image. The request-triggered 
 ## 4. Check the result
 
 ```sh
-kubectl logs -n platform deployment/event-consumer --tail=100
+kubectl logs -n platform deployment/website-orchestrator --tail=100
 kubectl logs -n platform deployment/website-provisioning --tail=100
 kubectl get all,hpa,pdb,resourcequota,ingress -n user4
 curl -k https://user4.myyotta.com:8443/health/ready
 ```
 
-Successful deployments publish `WebsiteCreated`. If Helm rollout, the HTTPS health check, or the Helm test fails, the deployment script rolls back and GitHub Actions publishes `WebsiteDeploymentFailed`. The event consumer writes a readable notification to its logs and optionally posts to `NOTIFICATION_WEBHOOK_URL`. The deployment workflow uploads Kubernetes resource and event logs as a 14-day artifact.
+Successful deployments publish `WebsiteCreated`. If Helm rollout, the HTTPS health check, or the Helm test fails, the deployment script rolls back and GitHub Actions publishes `WebsiteDeploymentFailed`. The website orchestrator writes a readable notification to its logs and optionally posts to `NOTIFICATION_WEBHOOK_URL`. The deployment workflow uploads Kubernetes resource and event logs as a 14-day artifact.
 
 For direct deployment of the three sample tenants, use:
 
 ```sh
 IMAGE=ghcr.io/<owner>/website-app:<tag> \\
-EVENT_IMAGE=ghcr.io/<owner>/website-event-consumer:<tag> \\
+ORCHESTRATOR_IMAGE=ghcr.io/<owner>/website-orchestrator:<tag> \\
 PULL_IMAGE=true ./scripts/deploy-platform.sh
 ```
 
@@ -65,7 +77,7 @@ The workflow's manual dispatch can deploy one DNS-safe tenant name or all three 
 
 ## What CI checks before it deploys
 
-The service pipeline runs Python lint and unit tests, Bandit checks for risky code patterns, `pip-audit` checks dependencies, and Gitleaks checks the repository for committed credentials. It lints each Dockerfile, builds and scans the image, then starts the API with a temporary PostgreSQL database and checks its health endpoint. The event-consumer pipeline also publishes a test event to a real Kafka broker.
+The service pipeline runs Python lint and unit tests, Bandit checks for risky code patterns, `pip-audit` checks dependencies, and Gitleaks checks the repository for committed credentials. It lints each Dockerfile, builds and scans the image, then starts the API with a temporary PostgreSQL database and checks its health endpoint. The website-orchestrator pipeline also publishes a test event to a real Kafka broker.
 
 Each pushed image is tagged `major.minor.patch-UTCtimestamp-<GitHub run ID>`, for example `1.0.0-20261115081354-43693315269`. The repository owner portion of the GHCR image name is normalized to lowercase. Update the repository's `VERSION` file to change the major, minor, or patch part.
 
@@ -86,6 +98,6 @@ Each tenant has CPU and memory requests/limits, CPU and memory HPA targets, a Re
 
 ## Local development
 
-Docker Compose runs local PostgreSQL, Kafka, the FastAPI services, and the event consumer. Forward or call the provisioning API on `http://127.0.0.1:3001`. The consumer defaults to dry-run mode so local requests do not start real GitHub workflows. To exercise dispatch from Compose, set `ORCHESTRATOR_DRY_RUN=false`, `ORCHESTRATOR_REPOSITORY`, and `ORCHESTRATOR_GITHUB_TOKEN`.
+Docker Compose runs local PostgreSQL, Kafka, the FastAPI services, and the website orchestrator. Forward or call the provisioning API on `http://127.0.0.1:3001`. The orchestrator defaults to dry-run mode so local requests do not start real GitHub workflows. To exercise dispatch from Compose, set `ORCHESTRATOR_DRY_RUN=false`, `ORCHESTRATOR_REPOSITORY`, and `ORCHESTRATOR_GITHUB_TOKEN`.
 
 For actual Kubernetes deployment, use Helm releases. The platform, Day 0 API, and every tenant deployment have separate charts/releases. The setup and deployment scripts use `kubectl` only for readiness checks, port forwarding, logs, and inspection.

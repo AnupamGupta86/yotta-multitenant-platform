@@ -23,7 +23,7 @@ for tenant in user1 user2 user3; do
 done
 ```
 
-**Observed:** the three tenant namespaces each had website workloads and a PostgreSQL StatefulSet/PVC. All tenant PVCs were `Bound`. The platform namespace separately contained the provisioning API/database and platform Kafka/event-consumer components.
+**Observed:** the three tenant namespaces each had website workloads and a PostgreSQL StatefulSet/PVC. All tenant PVCs were `Bound`. The platform namespace separately contained the provisioning API/database and platform Kafka/website-orchestrator components.
 
 ### Check automatic host routing and TLS
 
@@ -69,7 +69,7 @@ git diff --check
 
 **Observed:** actionlint and shellcheck returned successfully; Helm reported all three application/platform charts linted with 0 failures; `git diff --check` returned clean. The optional Calico CRD chart has no values/templates and emits Helm informational messages, not a lint failure.
 
-Service CI includes Python lint/unit tests, Bandit, dependency auditing, secret scanning, Dockerfile lint, container build and Trivy image scan, plus service health/functional checks. The local test suites run in the service images: website-app **8 passed**, event-consumer **11 passed**, and website-provisioning **7 passed** using the compatible `unittest` runner. A follow-up attempt to run pytest in a temporary provisioning image failed because that image's installed pytest imports Python's removed `imp` module; this is why the recorded passing service suite uses unittest. CI was updated to install `httpx2`, which the installed Starlette TestClient requires.
+Service CI includes Python lint/unit tests, Bandit, dependency auditing, secret scanning, Dockerfile lint, container build and Trivy image scan, plus service health/functional checks. The local test suites run in the service images: website-app **8 passed**, website-orchestrator **11 passed**, and website-provisioning **7 passed** using the compatible `unittest` runner. A follow-up attempt to run pytest in a temporary provisioning image failed because that image's installed pytest imports Python's removed `imp` module; this is why the recorded passing service suite uses unittest. CI was updated to install `httpx2`, which the installed Starlette TestClient requires.
 
 Trivy image scans of the three service images and Trivy config scans of rendered platform/provisioning/tenant manifests completed with no high or critical findings. Hadolint completed without findings. Kubeconform could not download its schemas from `raw.githubusercontent.com` in this environment, so schema validation is **not independently confirmed here**; the chart CI step remains configured to run it where network access is available.
 
@@ -83,7 +83,7 @@ curl -k -i -X POST https://provisioning.myyotta.com:8443/api/v1/websites \
   -d '{"tenant":"user4","domain":"user4.myyotta.com"}'
 ```
 
-The expected response is `202 Accepted`; the orchestrator consumes `WebsiteProvisioningRequested` and dispatches `Website App Deployment`. On successful tenant deployment, the workflow publishes `WebsiteCreated`. On Helm/health-check failure, it rolls back and publishes `WebsiteDeploymentFailed`. The event consumer writes a notification to its logs and can also send it to `NOTIFICATION_WEBHOOK_URL`.
+The expected response is `202 Accepted`; the website orchestrator consumes `WebsiteProvisioningRequested` and dispatches `Website App Deployment`. On successful tenant deployment, the workflow publishes `WebsiteCreated`. On Helm/health-check failure, it rolls back and publishes `WebsiteDeploymentFailed`. The website orchestrator writes a notification to its logs and can also send it to `NOTIFICATION_WEBHOOK_URL`.
 
 **Observed:** an invalid request returned HTTP `422` and emitted no provisioning event. The Kafka topic contained `WebsiteProvisioningRequested` for `user4`, and GitHub accepted dispatch of workflow run `43675206685`. Its state was pending with no jobs because the repository had **zero registered self-hosted runners**. Therefore the `user4` deployment did not happen. The Kafka consumer group had offset 4, log-end offset 4, and lag 0 for the events observed. The three sample tenant `WebsiteCreated` events were consumed.
 
@@ -131,12 +131,12 @@ In another terminal, query Prometheus for `up` and `yotta_http_requests_total`. 
 
 ## 4. Kafka deployment events
 
-Kafka runs as a single broker in the Kind platform release. The Compose environment also includes a Kafka broker for local development. Website deployment publishes `WebsiteCreated` after successful Helm deployment; the workflow publishes `WebsiteDeploymentFailed` after rollback/failure. The event consumer logs notification details and optionally posts to a webhook.
+Kafka runs as a single broker in the Kind platform release. The Compose environment also includes a Kafka broker for local development. Website deployment publishes `WebsiteCreated` after successful Helm deployment; the workflow publishes `WebsiteDeploymentFailed` after rollback/failure. The website orchestrator logs notification details and optionally posts to a webhook.
 
 ### Verify broker topic and consumer
 
 ```sh
-kubectl logs -n platform deployment/event-consumer --since=15m
+kubectl logs -n platform deployment/website-orchestrator --since=15m
 kubectl exec -n platform deploy/kafka -- \
   kafka-consumer-groups --bootstrap-server localhost:9092 \
   --describe --group deployment-orchestrator
@@ -151,6 +151,6 @@ kubectl exec -n platform deploy/kafka -- \
 3. Once the runner is online, retry the `user4` workflow and confirm its host, TLS certificate, readiness, and `WebsiteCreated` event.
 4. Kubeconform could not download schemas due to network/DNS restrictions during this audit. Confirm that step in a network-enabled CI run.
 5. The local TLS certificates are self-signed. Production/public access needs real DNS and a trusted certificate issuer.
-6. An older Docker Compose stack (`database-api`, `provisioning-api`, `postgres`, Kafka, and event-consumer) was already running separately on ports 3001/3002/5432/9092. It was left untouched to protect its data; stop/clean it deliberately when no longer needed, and avoid confusing its endpoints with the fresh Kind environment.
+6. An older Docker Compose stack (`database-api`, `provisioning-api`, `postgres`, Kafka, and website-orchestrator) was already running separately on ports 3001/3002/5432/9092. It was left untouched to protect its data; stop/clean it deliberately when no longer needed, and avoid confusing its endpoints with the fresh Kind environment.
 
 The user-requested implementation preference for Python is met by the Python services. The website app currently uses Python's standard-library HTTP server; FastAPI is used for the provisioning API.

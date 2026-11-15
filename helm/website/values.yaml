@@ -48,6 +48,6 @@ database:
     storageClassName: ""
 eventPublisher:
   enabled: false
-  image: yotta/event-consumer:local
+  image: yotta/website-orchestrator:local
   bootstrapServers: kafka.platform.svc.cluster.local:19092
   correlationId: ""

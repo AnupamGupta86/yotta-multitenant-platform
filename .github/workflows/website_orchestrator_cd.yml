@@ -1,10 +1,10 @@
-# No-op change to allow workflow-triggering commits.
-name: Event Consumer Deployment
+# CI retrigger marker: 2026-11-15.
+name: Website Orchestrator Deployment
 on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: Exact published website-event-consumer image tag from the CI run summary
+        description: Exact published website-orchestrator image tag from the CI run summary
         type: string
         required: true
 permissions:
@@ -47,13 +47,13 @@ jobs:
       - name: Normalize image owner for GHCR
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          echo "IMAGE=ghcr.io/$owner/website-event-consumer:$IMAGE_TAG" >> "$GITHUB_ENV"
-      - name: Pull and load the selected consumer image into Kind
+          echo "IMAGE=ghcr.io/$owner/website-orchestrator:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: Pull and load the selected website orchestrator image into Kind
         run: |
           docker pull "$IMAGE"
           kind load docker-image "$IMAGE" --name yotta-platform
       - name: Upgrade the deployment orchestrator with Helm
         run: |
           helm upgrade --install platform helm/platform --namespace platform --reuse-values \
-            --set-string images.eventConsumer="$IMAGE" --wait --timeout 10m
-          kubectl rollout status deployment/event-consumer --namespace platform --timeout=5m
+            --set-string images.websiteOrchestrator="$IMAGE" --wait --timeout 10m
+          kubectl rollout status deployment/website-orchestrator --namespace platform --timeout=5m

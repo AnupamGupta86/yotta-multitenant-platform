@@ -1,5 +1,5 @@
-# No-op change to allow workflow-triggering commits.
-name: Event Consumer CI
+# CI retrigger marker: 2026-11-15.
+name: Website Orchestrator CI
 on:
   push:
     branches: ['**']
@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: event-consumer-ci-${{ github.ref }}
+  group: website-orchestrator-ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   validate:
@@ -23,21 +23,21 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install validation dependencies
-        working-directory: services/event-consumer
+        working-directory: services/website-orchestrator
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pytest ruff bandit pip-audit
       - name: Python lint
-        working-directory: services/event-consumer
+        working-directory: services/website-orchestrator
         run: ruff check src test publish_event.py
       - name: Unit tests
-        working-directory: services/event-consumer
+        working-directory: services/website-orchestrator
         run: python -m pytest -q
       - name: Static application security scan
-        working-directory: services/event-consumer
+        working-directory: services/website-orchestrator
         run: bandit -q -r src publish_event.py
       - name: Dependency vulnerability audit
-        working-directory: services/event-consumer
+        working-directory: services/website-orchestrator
         run: pip-audit -r requirements.txt --strict
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
@@ -46,29 +46,29 @@ jobs:
       - name: Dockerfile lint
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: services/event-consumer/Dockerfile
+          dockerfile: services/website-orchestrator/Dockerfile
       - uses: docker/setup-buildx-action@v3
-      - name: Build consumer image
+      - name: Build orchestrator image
         uses: docker/build-push-action@v6
         with:
-          context: services/event-consumer
+          context: services/website-orchestrator
           load: true
-          tags: local/website-event-consumer:${{ github.sha }}
-      - name: Scan consumer image
+          tags: local/website-orchestrator:${{ github.sha }}
+      - name: Scan orchestrator image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: local/website-event-consumer:${{ github.sha }}
+          image-ref: local/website-orchestrator:${{ github.sha }}
           trivyignores: .trivyignore
           format: table
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL,HIGH
-      - name: Kafka producer and consumer integration check
+      - name: Kafka producer and orchestrator integration check
         env:
           KAFKA_BOOTSTRAP_SERVERS: localhost:9092
         run: |
-          trap 'docker logs consumer-under-test 2>/dev/null || true; docker rm -f consumer-under-test >/dev/null 2>&1 || true; docker compose down -v' EXIT
+          trap 'docker logs orchestrator-under-test 2>/dev/null || true; docker rm -f orchestrator-under-test >/dev/null 2>&1 || true; docker compose down -v' EXIT
           docker compose up -d kafka
           ready=false
           for _ in {1..30}; do
@@ -83,17 +83,17 @@ jobs:
             echo 'Kafka did not become ready' >&2
             exit 1
           fi
-          docker run -d --name consumer-under-test --network host \
+          docker run -d --name orchestrator-under-test --network host \
             -e KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
             -e ORCHESTRATOR_DRY_RUN=true \
-            local/website-event-consumer:${{ github.sha }}
-          python services/event-consumer/publish_event.py --tenant ci --domain ci.localtest.me --image ci/website:test --event-type WebsiteProvisioningRequested
+            local/website-orchestrator:${{ github.sha }}
+          python services/website-orchestrator/publish_event.py --tenant ci --domain ci.localtest.me --image ci/website:test --event-type WebsiteProvisioningRequested
           for _ in {1..30}; do
-            if docker logs consumer-under-test 2>&1 | grep -q 'WebsiteProvisioningRequested'; then exit 0; fi
+            if docker logs orchestrator-under-test 2>&1 | grep -q 'WebsiteProvisioningRequested'; then exit 0; fi
             sleep 2
           done
-          docker logs consumer-under-test
-          echo 'Consumer did not log the published WebsiteProvisioningRequested event' >&2
+          docker logs orchestrator-under-test
+          echo 'Website orchestrator did not log the published WebsiteProvisioningRequested event' >&2
           exit 1
   publish:
     if: ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
@@ -124,7 +124,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ steps.version.outputs.owner }}/website-event-consumer
+          images: ghcr.io/${{ steps.version.outputs.owner }}/website-orchestrator
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
             type=sha,format=long
@@ -133,7 +133,7 @@ jobs:
             type=raw,value=latest
       - uses: docker/build-push-action@v6
         with:
-          context: services/event-consumer
+          context: services/website-orchestrator
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -150,6 +150,6 @@ jobs:
             echo
             echo "$IMAGE_TAG"
             echo
-            echo 'Enter this value in the image_tag field of the Event Consumer Deployment workflow.'
-            echo "Full image: ghcr.io/$IMAGE_OWNER/website-event-consumer:$IMAGE_TAG"
+            echo 'Enter this value in the image_tag field of the Website Orchestrator Deployment workflow.'
+            echo "Full image: ghcr.io/$IMAGE_OWNER/website-orchestrator:$IMAGE_TAG"
           } >> "$GITHUB_STEP_SUMMARY"

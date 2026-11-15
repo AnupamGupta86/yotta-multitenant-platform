@@ -1,11 +1,37 @@
 #!/usr/bin/env bash
+# Deploy and verify one tenant Helm release, rolling back on failure; run with ./scripts/deploy-tenant.sh <tenant> <domain> <image> [orchestrator-image] [correlation-id].
 set -euo pipefail
+
+DEFAULT_ORCHESTRATOR_IMAGE=yotta/website-orchestrator:local
+DEFAULT_CLUSTER_NAME=yotta-platform
+TENANT_CHART=helm/website
+HEALTH_PATH=/health/ready
+LOCAL_HTTPS_PORT=8443
+LOCAL_HOST_IP=127.0.0.1
+PULL_IMAGE="${PULL_IMAGE:-true}"
+HELM_TIMEOUT=10m
+ROLLBACK_TIMEOUT=5m
+HELM_TEST_TIMEOUT=3m
+READINESS_ATTEMPTS=30
+READINESS_RETRY_SECONDS=4
+REQUIRED_TOOLS=(docker kind helm curl python3)
 
 tenant="${1:?usage: deploy-tenant.sh <tenant> <domain> <image> [event-image] [correlation-id]}"
 domain="${2:?domain is required}"
 image="${3:?image is required}"
-event_image="${4:-yotta/event-consumer:local}"
+orchestrator_image="${4:-$DEFAULT_ORCHESTRATOR_IMAGE}"
 correlation_id="${5:-}"
+namespace="$tenant"
+release="$tenant"
+previous_revision=""
+tag="${image##*:}"
+repository="${image%:*}"
+cluster_name="${CLUSTER_NAME:-$DEFAULT_CLUSTER_NAME}"
+
+for tool in "${REQUIRED_TOOLS[@]}"; do
+  command -v "$tool" >/dev/null || { echo "Install $tool and retry" >&2; exit 1; }
+done
+
 if [[ ! "$tenant" =~ ^[a-z][a-z0-9-]{1,30}[a-z0-9]$ ]]; then
   echo "Tenant must be a DNS-safe name between 3 and 32 characters" >&2
   exit 2
@@ -18,26 +44,21 @@ if [[ ! "$image" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
   echo "Image reference contains unsupported characters" >&2
   exit 2
 fi
-if [[ ! "$event_image" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
-  echo "Event publisher image reference contains unsupported characters" >&2
+if [[ ! "$orchestrator_image" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
+  echo "Orchestrator image reference contains unsupported characters" >&2
   exit 2
 fi
 
-namespace="$tenant"
-release="$tenant"
-previous_revision=""
 if helm status "$release" --namespace "$namespace" >/dev/null 2>&1; then
   previous_revision="$(helm history "$release" --namespace "$namespace" --max 1 --output json | python3 -c 'import json,sys; print(json.load(sys.stdin)[-1]["revision"])')"
 fi
 
-tag="${image##*:}"
-repository="${image%:*}"
 failure_rollback() {
   local status=$?
   if [[ $status -ne 0 ]]; then
     echo "Deployment failed for $tenant; restoring last successful release" >&2
     if [[ -n "$previous_revision" ]]; then
-      helm rollback "$release" "$previous_revision" --namespace "$namespace" --wait --timeout 5m || true
+      helm rollback "$release" "$previous_revision" --namespace "$namespace" --wait --timeout "$ROLLBACK_TIMEOUT" || true
     else
       helm uninstall "$release" --namespace "$namespace" || true
     fi
@@ -46,13 +67,13 @@ failure_rollback() {
 }
 trap failure_rollback EXIT
 
-if [[ "${PULL_IMAGE:-true}" == "true" ]]; then
+if [[ "$PULL_IMAGE" == "true" ]]; then
   docker pull "$image"
-  docker pull "$event_image"
+  docker pull "$orchestrator_image"
 fi
-kind load docker-image "$image" --name yotta-platform
-kind load docker-image "$event_image" --name yotta-platform
-helm upgrade --install "$release" helm/website \
+kind load docker-image "$image" --name "$cluster_name"
+kind load docker-image "$orchestrator_image" --name "$cluster_name"
+helm upgrade --install "$release" "$TENANT_CHART" \
   --server-side=false \
   --namespace "$namespace" \
   --create-namespace \
@@ -63,22 +84,22 @@ helm upgrade --install "$release" helm/website \
   --set ingress.host="$domain" \
   --set database.name="$tenant" \
   --set eventPublisher.enabled=true \
-  --set eventPublisher.image="$event_image" \
+  --set eventPublisher.image="$orchestrator_image" \
   --set eventPublisher.correlationId="$correlation_id" \
-  --atomic --wait --timeout 10m
+  --atomic --wait --timeout "$HELM_TIMEOUT"
 
-for attempt in {1..30}; do
-  if curl --silent --show-error --insecure --fail --resolve "$domain:8443:127.0.0.1" "https://$domain:8443/health/ready" >/dev/null; then
+for ((attempt = 1; attempt <= READINESS_ATTEMPTS; attempt++)); do
+  if curl --silent --show-error --insecure --fail --resolve "$domain:$LOCAL_HTTPS_PORT:$LOCAL_HOST_IP" "https://$domain:$LOCAL_HTTPS_PORT$HEALTH_PATH" >/dev/null; then
     break
   fi
-  if [[ "$attempt" == 30 ]]; then
-    echo "HTTPS readiness check failed for https://$domain:8443" >&2
+  if ((attempt == READINESS_ATTEMPTS)); then
+    echo "HTTPS readiness check failed for https://$domain:$LOCAL_HTTPS_PORT" >&2
     exit 1
   fi
-  sleep 4
+  sleep "$READINESS_RETRY_SECONDS"
 done
 
-helm test "$release" --namespace "$namespace" --logs --timeout 3m
+helm test "$release" --namespace "$namespace" --logs --timeout "$HELM_TEST_TIMEOUT"
 
 echo "Deployment healthy: tenant=$tenant domain=$domain image=$image"
 trap - EXIT

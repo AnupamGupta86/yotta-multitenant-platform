@@ -1,4 +1,4 @@
-# No-op change to allow workflow-triggering commits.
+# CI retrigger marker: 2026-11-15.
 name: Website Provisioning Deployment
 on:
   workflow_dispatch:

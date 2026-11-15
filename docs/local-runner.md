@@ -14,4 +14,4 @@ Install Docker Desktop, Kind, kubectl, and Helm 4.x on the same Mac account that
 
 The workflow never registers a runner or stores a runner registration token. The platform Helm release stores the separate workflow-dispatch token in a Kubernetes Secret so the Kafka orchestrator can call GitHub. Self-hosted runners execute repository code on the Mac, so only use this setup for a repository whose workflow changes you trust. Rotate the dispatch token according to your repository's credential policy, then rerun setup to refresh the platform Secret.
 
-For delivery notifications, set `NOTIFICATION_WEBHOOK_URL` before setup. Without it, the event consumer writes notification messages to its logs, which Fluentd forwards to Loki.
+For delivery notifications, set `NOTIFICATION_WEBHOOK_URL` before setup. Without it, the website orchestrator writes notification messages to its logs, which Fluentd forwards to Loki.

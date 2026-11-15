@@ -7,7 +7,7 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
-logger = logging.getLogger("deployment-orchestrator")
+logger = logging.getLogger("website-orchestrator")
 REQUEST_EVENT = "WebsiteProvisioningRequested"
 OUTCOME_EVENTS = {"WebsiteCreated", "WebsiteDeploymentFailed"}
 

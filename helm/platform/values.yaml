@@ -1,6 +1,6 @@
 observabilityNamespace: observability
 images:
-  eventConsumer: yotta/event-consumer:local
+  websiteOrchestrator: yotta/website-orchestrator:local
   kafka: apache/kafka:4.4.0
   loki: grafana/loki:3.2.1
   fluentd: yotta/fluentd-loki:local

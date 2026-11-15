@@ -46,7 +46,7 @@ curl -sS -X POST http://127.0.0.1:3001/api/v1/websites \
 The API returns `202 Accepted` with an event ID. It publishes `WebsiteProvisioningRequested`. After the deployment, the platform publishes either `WebsiteCreated` or `WebsiteDeploymentFailed`. Follow the event and workflow logs with:
 
 ```sh
-kubectl logs -n platform deployment/event-consumer -f
+kubectl logs -n platform deployment/website-orchestrator -f
 kubectl logs -n platform deployment/website-provisioning -f
 ```
 
@@ -78,7 +78,7 @@ To deploy the three sample tenants manually through Helm:
 
 ```sh
 IMAGE=ghcr.io/<owner>/website-app:<image-tag> \\
-EVENT_IMAGE=ghcr.io/<owner>/website-event-consumer:<image-tag> \\
+ORCHESTRATOR_IMAGE=ghcr.io/<owner>/website-orchestrator:<image-tag> \\
 PULL_IMAGE=true ./scripts/deploy-platform.sh
 ```
 
@@ -90,6 +90,6 @@ To check a deployment and capture local evidence:
 
 Docker Compose is for local development and the Kafka integration test. It defaults the orchestrator to dry-run mode. To make Compose dispatch a real GitHub workflow, set `ORCHESTRATOR_DRY_RUN=false`, `ORCHESTRATOR_REPOSITORY`, and `ORCHESTRATOR_GITHUB_TOKEN`.
 
-Deployment outcome notifications are written to the event-consumer logs by default, which Fluentd forwards to Loki. To also send them to a webhook, set `NOTIFICATION_WEBHOOK_URL` before running `scripts/setup-kind.sh`; the platform chart stores it in a Kubernetes Secret.
+Deployment outcome notifications are written to the website-orchestrator logs by default, which Fluentd forwards to Loki. To also send them to a webhook, set `NOTIFICATION_WEBHOOK_URL` before running `scripts/setup-kind.sh`; the platform chart stores it in a Kubernetes Secret.
 
 See [deployment instructions](docs/deployment.md), [architecture](docs/architecture.md), [local runner setup](docs/local-runner.md), and [rollback notes](docs/rollback.md).

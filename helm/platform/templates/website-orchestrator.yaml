@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: website-orchestrator
+  labels: {app.kubernetes.io/name: website-orchestrator}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: website-orchestrator}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: website-orchestrator}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: website-orchestrator
+          image: {{ .Values.images.websiteOrchestrator | quote }}
+          env:
+            - {name: KAFKA_BOOTSTRAP_SERVERS, value: "kafka:19092"}
+            - {name: KAFKA_TOPIC, value: website-events}
+            - {name: GH_REPOSITORY, value: {{ .Values.orchestrator.repository | quote }}}
+            - {name: GH_WORKFLOW_NAME, value: {{ .Values.orchestrator.workflow | quote }}}
+            - {name: GH_REF, value: {{ .Values.orchestrator.ref | quote }}}
+            - name: NOTIFICATION_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: notification-webhook
+                  key: url
+                  optional: true
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator-github-token
+                  key: token
+                  optional: true
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: [ALL]}
