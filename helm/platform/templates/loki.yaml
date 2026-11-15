@@ -1,26 +1,42 @@
+{{- if .Values.observability.loki.storage.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.observability.loki.storage.claimName }}
+  namespace: {{ .Values.observabilityNamespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.observability.loki.storage.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.loki.storage.size | quote }}
+---
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: loki-config
+  name: {{ .Values.observability.loki.configMapName }}
   namespace: {{ .Values.observabilityNamespace }}
 data:
   config.yaml: |
-{{ .Files.Get "files/loki-config.yaml" | indent 4 }}
+{{ toYaml .Values.observability.loki.config | indent 4 }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: loki
+  name: {{ .Values.observability.loki.name }}
   namespace: {{ .Values.observabilityNamespace }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.observability.loki.replicas }}
   selector:
-    matchLabels: {app: loki}
+    matchLabels: {app: {{ .Values.observability.loki.name }}}
   template:
     metadata:
-      labels: {app: loki}
+      labels: {app: {{ .Values.observability.loki.name }}}
       annotations:
-        checksum/config: {{ .Files.Get "files/loki-config.yaml" | sha256sum }}
+        checksum/config: {{ toYaml .Values.observability.loki.config | sha256sum }}
     spec:
       securityContext:
         fsGroup: 10001
@@ -29,11 +45,21 @@ spec:
       containers:
         - name: loki
           image: {{ .Values.images.loki | quote }}
-          args: ["-config.file=/etc/loki/config.yaml"]
-          ports: [{name: http, containerPort: 3100}]
-          readinessProbe: {httpGet: {path: /ready, port: http}}
-          livenessProbe: {httpGet: {path: /ready, port: http}}
-          resources: {{- toYaml .Values.observability.loki.resources | nindent 12 }}
+          imagePullPolicy: {{ .Values.observability.loki.imagePullPolicy }}
+          args: ["-config.file={{ .Values.observability.loki.configFilePath }}"]
+          ports: [{name: http, containerPort: {{ .Values.observability.loki.config.server.http_listen_port }}}]
+          readinessProbe:
+            httpGet: {path: {{ .Values.observability.loki.readinessProbe.path }}, port: http}
+            initialDelaySeconds: {{ .Values.observability.loki.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.observability.loki.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.observability.loki.readinessProbe.timeoutSeconds }}
+          livenessProbe:
+            httpGet: {path: {{ .Values.observability.loki.livenessProbe.path }}, port: http}
+            initialDelaySeconds: {{ .Values.observability.loki.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.observability.loki.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.observability.loki.livenessProbe.timeoutSeconds }}
+          resources:
+            {{- toYaml .Values.observability.loki.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -41,20 +67,27 @@ spec:
             runAsUser: 10001
             capabilities: {drop: [ALL]}
           volumeMounts:
-            - {name: config, mountPath: /etc/loki}
-            - {name: data, mountPath: /loki}
-            - {name: tmp, mountPath: /tmp}
+            - {name: {{ .Values.observability.loki.configVolumeName }}, mountPath: {{ .Values.observability.loki.configFilePath | dir | quote }}}
+            - {name: {{ .Values.observability.loki.dataVolumeName }}, mountPath: {{ .Values.observability.loki.dataPath | quote }}}
+            - {name: {{ .Values.observability.loki.temporaryVolumeName }}, mountPath: /tmp}
       volumes:
-        - name: config
-          configMap: {name: loki-config}
-        - {name: data, emptyDir: {}}
-        - {name: tmp, emptyDir: {}}
+        - name: {{ .Values.observability.loki.configVolumeName }}
+          configMap: {name: {{ .Values.observability.loki.configMapName }}}
+        - name: {{ .Values.observability.loki.dataVolumeName }}
+          {{- if .Values.observability.loki.storage.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.observability.loki.storage.claimName }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: {{ .Values.observability.loki.temporaryVolumeName }}
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: loki
+  name: {{ .Values.observability.loki.name }}
   namespace: {{ .Values.observabilityNamespace }}
 spec:
-  selector: {app: loki}
-  ports: [{name: http, port: 3100, targetPort: http}]
+  selector: {app: {{ .Values.observability.loki.name }}}
+  ports: [{name: http, port: {{ .Values.observability.loki.config.server.http_listen_port }}, targetPort: http}]

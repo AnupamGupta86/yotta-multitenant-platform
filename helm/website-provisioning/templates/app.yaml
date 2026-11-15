@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: website-provisioning
-  labels: {app.kubernetes.io/name: website-provisioning}
+  name: {{ .Values.service.name }}
+  labels: {app.kubernetes.io/name: {{ .Values.service.name }}}
 spec:
   replicas: {{ .Values.api.replicas }}
   selector:
-    matchLabels: {app.kubernetes.io/name: website-provisioning}
+    matchLabels: {app.kubernetes.io/name: {{ .Values.service.name }}}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: website-provisioning}
+      labels: {app.kubernetes.io/name: {{ .Values.service.name }}}
     spec:
       automountServiceAccountToken: false
       securityContext:
         seccompProfile: {type: RuntimeDefault}
       containers:
-        - name: website-provisioning
+        - name: {{ .Values.service.name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
@@ -25,23 +25,23 @@ spec:
             - name: KAFKA_TOPIC
               value: {{ .Values.kafka.topic | quote }}
             - name: DB_PASSWORD
-              valueFrom: {secretKeyRef: {name: provisioning-db-credentials, key: password}}
+              valueFrom: {secretKeyRef: {name: {{ .Values.postgres.secretName }}, key: password}}
             - name: DATABASE_URL
-              value: postgresql://provisioning:$(DB_PASSWORD)@website-provisioning-postgres:5432/provisioning
+              value: {{ printf "postgresql://%s:$(DB_PASSWORD)@%s:%v/%s" .Values.postgres.user .Values.service.postgresName .Values.postgres.port .Values.postgres.database | quote }}
           ports: [{name: http, containerPort: {{ .Values.api.port }}}]
           startupProbe:
-            httpGet: {path: /health/live, port: http}
-            periodSeconds: 5
-            timeoutSeconds: 2
-            failureThreshold: 60
+            httpGet: {path: {{ .Values.api.startupProbe.path }}, port: http}
+            periodSeconds: {{ .Values.api.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.api.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.api.startupProbe.failureThreshold }}
           livenessProbe:
-            httpGet: {path: /health/live, port: http}
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            httpGet: {path: {{ .Values.api.livenessProbe.path }}, port: http}
+            initialDelaySeconds: {{ .Values.api.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.livenessProbe.periodSeconds }}
           readinessProbe:
-            httpGet: {path: /health/ready, port: http}
-            initialDelaySeconds: 5
-            periodSeconds: 5
+            httpGet: {path: {{ .Values.api.readinessProbe.path }}, port: http}
+            initialDelaySeconds: {{ .Values.api.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.readinessProbe.periodSeconds }}
           resources: {{- toYaml .Values.api.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -53,8 +53,8 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: website-provisioning
-  labels: {app.kubernetes.io/name: website-provisioning}
+  name: {{ .Values.service.name }}
+  labels: {app.kubernetes.io/name: {{ .Values.service.name }}}
 spec:
-  selector: {app.kubernetes.io/name: website-provisioning}
-  ports: [{name: http, port: 80, targetPort: http}]
+  selector: {app.kubernetes.io/name: {{ .Values.service.name }}}
+  ports: [{name: http, port: {{ .Values.service.port }}, targetPort: http}]

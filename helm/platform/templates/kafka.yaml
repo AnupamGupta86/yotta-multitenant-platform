@@ -1,37 +1,37 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: kafka-headless
+  name: {{ .Values.kafka.headlessServiceName }}
 spec:
   clusterIP: None
   publishNotReadyAddresses: true
-  selector: {app.kubernetes.io/name: kafka}
+  selector: {app.kubernetes.io/name: {{ .Values.kafka.name }}}
   ports:
-    - {name: controller, port: 9093, targetPort: controller}
+    - {name: controller, port: {{ .Values.kafka.ports.controller }}, targetPort: controller}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: kafka
+  name: {{ .Values.kafka.name }}
 spec:
   publishNotReadyAddresses: true
-  selector: {app.kubernetes.io/name: kafka}
+  selector: {app.kubernetes.io/name: {{ .Values.kafka.name }}}
   ports:
-    - {name: internal, port: 19092, targetPort: internal}
-    - {name: external, port: 9092, targetPort: external}
+    - {name: internal, port: {{ .Values.kafka.ports.internal }}, targetPort: internal}
+    - {name: external, port: {{ .Values.kafka.ports.external }}, targetPort: external}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: kafka
+  name: {{ .Values.kafka.name }}
 spec:
-  serviceName: kafka-headless
-  replicas: 1
+  serviceName: {{ .Values.kafka.headlessServiceName }}
+  replicas: {{ .Values.kafka.replicas }}
   selector:
-    matchLabels: {app.kubernetes.io/name: kafka}
+    matchLabels: {app.kubernetes.io/name: {{ .Values.kafka.name }}}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: kafka}
+      labels: {app.kubernetes.io/name: {{ .Values.kafka.name }}}
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -56,34 +56,37 @@ spec:
         - name: kafka
           image: {{ .Values.images.kafka | quote }}
           ports:
-            - {name: controller, containerPort: 9093}
-            - {name: internal, containerPort: 19092}
-            - {name: external, containerPort: 9092}
+            - {name: controller, containerPort: {{ .Values.kafka.ports.controller }}}
+            - {name: internal, containerPort: {{ .Values.kafka.ports.internal }}}
+            - {name: external, containerPort: {{ .Values.kafka.ports.external }}}
           env:
-            - {name: KAFKA_NODE_ID, value: "1"}
-            - {name: KAFKA_PROCESS_ROLES, value: "broker,controller"}
-            - {name: KAFKA_LOG_DIRS, value: /var/lib/kafka/data}
-            - {name: KAFKA_LISTENERS, value: "CONTROLLER://:9093,INTERNAL://:19092,EXTERNAL://:9092"}
-            - {name: KAFKA_ADVERTISED_LISTENERS, value: "INTERNAL://kafka.platform.svc.cluster.local:19092,EXTERNAL://localhost:19092"}
-            - {name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"}
-            - {name: KAFKA_CONTROLLER_LISTENER_NAMES, value: CONTROLLER}
-            - {name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@kafka-0.kafka-headless.platform.svc.cluster.local:9093"}
-            - {name: KAFKA_INTER_BROKER_LISTENER_NAME, value: INTERNAL}
-            - {name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1"}
-            - {name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1"}
-            - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1"}
-            - {name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: "0"}
-            - {name: KAFKA_NUM_PARTITIONS, value: "1"}
+            - {name: KAFKA_NODE_ID, value: {{ .Values.kafka.nodeId | quote }}}
+            - {name: KAFKA_PROCESS_ROLES, value: {{ .Values.kafka.processRoles | quote }}}
+            - {name: KAFKA_LOG_DIRS, value: {{ .Values.kafka.storage.mountPath | quote }}}
+            - name: KAFKA_LISTENERS
+              value: {{ printf "%s://:%v,%s://:%v,%s://:%v" .Values.kafka.listeners.controller .Values.kafka.ports.controller .Values.kafka.listeners.internal .Values.kafka.ports.internal .Values.kafka.listeners.external .Values.kafka.ports.external | quote }}
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: {{ printf "%s://%s.%s.svc.cluster.local:%v,%s://%s:%v" .Values.kafka.listeners.internal .Values.kafka.name .Release.Namespace .Values.kafka.ports.internal .Values.kafka.listeners.external .Values.kafka.listeners.externalAdvertisedHost .Values.kafka.listeners.externalAdvertisedPort | quote }}
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: {{ printf "%s:%s,%s:%s,%s:%s" .Values.kafka.listeners.controller .Values.kafka.listeners.securityProtocol .Values.kafka.listeners.internal .Values.kafka.listeners.securityProtocol .Values.kafka.listeners.external .Values.kafka.listeners.securityProtocol | quote }}
+            - {name: KAFKA_CONTROLLER_LISTENER_NAMES, value: {{ .Values.kafka.listeners.controller | quote }}}
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: {{ printf "%v@%s-0.%s.%s.svc.cluster.local:%v" .Values.kafka.nodeId .Values.kafka.name .Values.kafka.headlessServiceName .Release.Namespace .Values.kafka.ports.controller | quote }}
+            - {name: KAFKA_INTER_BROKER_LISTENER_NAME, value: {{ .Values.kafka.listeners.internal | quote }}}
+            - {name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: {{ .Values.kafka.offsetsReplicationFactor | quote }}}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: {{ .Values.kafka.transactionReplicationFactor | quote }}}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: {{ .Values.kafka.transactionMinIsr | quote }}}
+            - {name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: {{ .Values.kafka.groupInitialRebalanceDelayMs | quote }}}
+            - {name: KAFKA_NUM_PARTITIONS, value: {{ .Values.kafka.numPartitions | quote }}}
           readinessProbe:
             exec:
-              command: [sh, -c, "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list >/dev/null 2>&1"]
-            initialDelaySeconds: 20
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 6
+              command: [sh, -c, "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:{{ .Values.kafka.ports.internal }} --list >/dev/null 2>&1"]
+            initialDelaySeconds: {{ .Values.kafka.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.kafka.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.kafka.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.kafka.readinessProbe.failureThreshold }}
           resources:
-            requests: {cpu: 250m, memory: 512Mi}
-            limits: {cpu: "2", memory: 2Gi}
+            {{- toYaml .Values.kafka.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -91,19 +94,19 @@ spec:
           volumeMounts:
             - {name: kafka-config, mountPath: /opt/kafka/config}
             - {name: kafka-logs, mountPath: /opt/kafka/logs}
-            - {name: data, mountPath: /var/lib/kafka/data}
+            - {name: {{ .Values.kafka.storage.volumeName }}, mountPath: {{ .Values.kafka.storage.mountPath | quote }}}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - {name: kafka-config, emptyDir: {}}
         - {name: kafka-logs, emptyDir: {}}
         {{- if not .Values.kafka.storage.enabled }}
-        - {name: data, emptyDir: {}}
+        - {name: {{ .Values.kafka.storage.volumeName }}, emptyDir: {}}
         {{- end }}
         - {name: tmp, emptyDir: {}}
   {{- if .Values.kafka.storage.enabled }}
   volumeClaimTemplates:
     - metadata:
-        name: data
+        name: {{ .Values.kafka.storage.volumeName }}
       spec:
         accessModes: [ReadWriteOnce]
         {{- with .Values.kafka.storage.storageClassName }}

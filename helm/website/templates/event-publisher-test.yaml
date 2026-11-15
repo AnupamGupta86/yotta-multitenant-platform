@@ -7,8 +7,8 @@ metadata:
     helm.sh/hook: test
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
-  backoffLimit: 3
-  activeDeadlineSeconds: 120
+  backoffLimit: {{ .Values.eventPublisher.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.eventPublisher.activeDeadlineSeconds }}
   template:
     metadata:
       labels:
@@ -23,7 +23,7 @@ spec:
       containers:
         - name: publish-event
           image: {{ .Values.eventPublisher.image | quote }}
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: {{ .Values.eventPublisher.imagePullPolicy }}
           command: [python, /app/publish_event.py]
           args:
             - --tenant
@@ -33,14 +33,13 @@ spec:
             - --image
             - {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
             - --event-type
-            - WebsiteCreated
+            - {{ .Values.eventPublisher.eventType | quote }}
             - --correlation-id
             - {{ .Values.eventPublisher.correlationId | quote }}
             - --bootstrap-servers
             - {{ .Values.eventPublisher.bootstrapServers | quote }}
           resources:
-            requests: {cpu: 50m, memory: 64Mi}
-            limits: {cpu: 250m, memory: 256Mi}
+            {{- toYaml .Values.eventPublisher.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

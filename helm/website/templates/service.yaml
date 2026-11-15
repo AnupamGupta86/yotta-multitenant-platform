@@ -6,12 +6,12 @@ metadata:
     app.kubernetes.io/name: website-app
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  type: ClusterIP
+  type: {{ .Values.service.type }}
   selector:
     app.kubernetes.io/name: website-app
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
-    - name: http
-      port: 80
-      targetPort: http
+    - name: {{ .Values.service.targetPortName }}
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPortName }}
       protocol: TCP

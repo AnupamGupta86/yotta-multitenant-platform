@@ -1,27 +1,145 @@
 observabilityNamespace: observability
+clusterIssuer:
+  name: local-selfsigned
+dashboard:
+  configMapName: website-platform-dashboard
+  labelName: grafana_dashboard
+  labelValue: "1"
 images:
   websiteOrchestrator: yotta/website-orchestrator:local
   kafka: apache/kafka:4.4.0
   loki: grafana/loki:3.2.1
   fluentd: yotta/fluentd-loki:local
 kafka:
+  name: kafka
+  headlessServiceName: kafka-headless
+  replicas: 1
+  ports:
+    controller: 9093
+    internal: 19092
+    external: 9092
+  listeners:
+    controller: CONTROLLER
+    internal: INTERNAL
+    external: EXTERNAL
+    securityProtocol: PLAINTEXT
+    externalAdvertisedHost: localhost
+    externalAdvertisedPort: 19092
+  nodeId: 1
+  processRoles: broker,controller
+  offsetsReplicationFactor: 1
+  transactionReplicationFactor: 1
+  transactionMinIsr: 1
+  groupInitialRebalanceDelayMs: 0
+  numPartitions: 1
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  readinessProbe:
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
   storage:
     enabled: true
     size: 10Gi
     storageClassName: ""
+    volumeName: data
+    mountPath: /var/lib/kafka/data
 orchestrator:
+  replicas: 1
   repository: ""
   workflow: website_app_cd.yml
   ref: master
   githubToken: ""
+  kafkaTopic: website-events
+  kafkaGroupId: deployment-orchestrator
+  imagePullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
 notification:
+  secretName: notification-webhook
   webhookUrl: ""
+secrets:
+  orchestratorTokenName: orchestrator-github-token
 observability:
   loki:
+    replicas: 1
+    name: loki
+    configMapName: loki-config
+    configFilePath: /etc/loki/config.yaml
+    dataPath: /loki
+    configVolumeName: loki-config
+    dataVolumeName: loki-data
+    temporaryVolumeName: loki-tmp
+    imagePullPolicy: IfNotPresent
+    storage:
+      enabled: false
+      claimName: loki-data
+      size: 10Gi
+      storageClassName: ""
+    config:
+      auth_enabled: false
+      server:
+        http_listen_port: 3100
+      common:
+        path_prefix: /loki
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+      schema_config:
+        configs:
+          - from: "2024-01-01"
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+      limits_config:
+        allow_structured_metadata: true
+        ingestion_rate_mb: 16
+        ingestion_burst_size_mb: 32
+    readinessProbe:
+      path: /ready
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+    livenessProbe:
+      path: /ready
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
     resources:
       requests: {cpu: 100m, memory: 256Mi}
       limits: {cpu: 500m, memory: 512Mi}
   fluentd:
+    serviceAccountName: fluentd
+    configMapName: fluentd-config
+    daemonSetName: fluentd
+    imagePullPolicy: IfNotPresent
+    tmpDirectory: /tmp/fluentd
+    bufferDirectory: /var/log/fluentd
+    containerLogsPath: /var/log/containers/*.log
+    positionFile: /var/log/fluentd/containers.pos
+    readFromHead: true
+    logLevel: info
+    lokiUrl: http://loki.observability.svc.cluster.local:3100
+    clusterLabel: yotta-local
+    jobLabel: kubernetes
+    flushInterval: 5s
+    flushAtShutdown: true
+    bufferChunkLimit: 2m
+    bufferQueueLimit: 32
+    hostPaths:
+      containers: /var/log/containers
+      pods: /var/log/pods
     resources:
       requests: {cpu: 100m, memory: 128Mi}
       limits: {cpu: 500m, memory: 512Mi}

@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   serviceName: {{ .Release.Name }}-postgres
-  replicas: 1
+  replicas: {{ .Values.database.replicas }}
   selector:
     matchLabels:
       app.kubernetes.io/name: tenant-postgres
@@ -40,40 +40,35 @@ spec:
                   name: {{ .Values.database.secretName }}
                   key: password
             - name: PGDATA
-              value: /var/lib/postgresql/data/pgdata
+              value: {{ .Values.database.pgdata | quote }}
           ports:
             - name: postgres
-              containerPort: 5432
+              containerPort: {{ .Values.database.port }}
           startupProbe:
             exec:
               command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 30
+            periodSeconds: {{ .Values.database.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.database.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.database.startupProbe.failureThreshold }}
           readinessProbe:
             exec:
               command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
-            timeoutSeconds: 3
-            periodSeconds: 5
+            timeoutSeconds: {{ .Values.database.readinessProbe.timeoutSeconds }}
+            periodSeconds: {{ .Values.database.readinessProbe.periodSeconds }}
           livenessProbe:
             exec:
               command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
-            timeoutSeconds: 3
-            periodSeconds: 10
+            timeoutSeconds: {{ .Values.database.livenessProbe.timeoutSeconds }}
+            periodSeconds: {{ .Values.database.livenessProbe.periodSeconds }}
           resources:
-            requests:
-              cpu: 250m
-              memory: 256Mi
-            limits:
-              cpu: "1"
-              memory: 1Gi
+            {{- toYaml .Values.database.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
           volumeMounts:
             - name: data
-              mountPath: /var/lib/postgresql/data
+              mountPath: {{ .Values.database.mountPath | quote }}
             - name: tmp
               mountPath: /tmp
             - name: postgres-run
@@ -112,6 +107,6 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: postgres
-      port: 5432
+      port: {{ .Values.database.port }}
       targetPort: postgres
 {{- end }}

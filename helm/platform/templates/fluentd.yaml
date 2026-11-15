@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: fluentd
+  name: {{ .Values.observability.fluentd.serviceAccountName }}
   namespace: {{ .Values.observabilityNamespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -23,22 +23,22 @@ roleRef:
   name: {{ .Release.Name }}-fluentd
 subjects:
   - kind: ServiceAccount
-    name: fluentd
+    name: {{ .Values.observability.fluentd.serviceAccountName }}
     namespace: {{ .Values.observabilityNamespace }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: fluentd-config
+  name: {{ .Values.observability.fluentd.configMapName }}
   namespace: {{ .Values.observabilityNamespace }}
 data:
   fluent.conf: |
-{{ .Files.Get "files/fluent.conf" | indent 4 }}
+{{ tpl (.Files.Get "files/fluent.conf") . | indent 4 }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: fluentd
+  name: {{ .Values.observability.fluentd.daemonSetName }}
   namespace: {{ .Values.observabilityNamespace }}
 spec:
   selector:
@@ -47,9 +47,9 @@ spec:
     metadata:
       labels: {app: fluentd}
       annotations:
-        checksum/config: {{ .Files.Get "files/fluent.conf" | sha256sum }}
+        checksum/config: {{ tpl (.Files.Get "files/fluent.conf") . | sha256sum }}
     spec:
-      serviceAccountName: fluentd
+      serviceAccountName: {{ .Values.observability.fluentd.serviceAccountName }}
       tolerations: [{operator: Exists}]
       securityContext:
         runAsNonRoot: true
@@ -60,7 +60,7 @@ spec:
       initContainers:
         - name: prepare-private-temp-directory
           image: {{ .Values.images.fluentd | quote }}
-          command: [sh, -ec, "mkdir -p /tmp/fluentd && chmod 700 /tmp/fluentd"]
+          command: [sh, -ec, {{ printf "mkdir -p %s && chmod 700 %s" .Values.observability.fluentd.tmpDirectory .Values.observability.fluentd.tmpDirectory | quote }}]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -70,11 +70,11 @@ spec:
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
       containers:
-        - name: fluentd
+        - name: {{ .Values.observability.fluentd.daemonSetName }}
           image: {{ .Values.images.fluentd | quote }}
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: {{ .Values.observability.fluentd.imagePullPolicy }}
           env:
-            - {name: TMPDIR, value: /tmp/fluentd}
+            - {name: TMPDIR, value: {{ .Values.observability.fluentd.tmpDirectory | quote }}}
           resources: {{- toYaml .Values.observability.fluentd.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -85,17 +85,17 @@ spec:
             capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: config, mountPath: /fluentd/etc/fluent.conf, subPath: fluent.conf}
-            - {name: containers, mountPath: /var/log/containers, readOnly: true}
-            - {name: pods, mountPath: /var/log/pods, readOnly: true}
-            - {name: buffer, mountPath: /var/log/fluentd}
+            - {name: containers, mountPath: {{ .Values.observability.fluentd.hostPaths.containers | quote }}, readOnly: true}
+            - {name: pods, mountPath: {{ .Values.observability.fluentd.hostPaths.pods | quote }}, readOnly: true}
+            - {name: buffer, mountPath: {{ .Values.observability.fluentd.bufferDirectory | quote }}}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: config
-          configMap: {name: fluentd-config}
+          configMap: {name: {{ .Values.observability.fluentd.configMapName }}}
         - name: containers
-          hostPath: {path: /var/log/containers}
+          hostPath: {path: {{ .Values.observability.fluentd.hostPaths.containers | quote }}}
         - name: pods
-          hostPath: {path: /var/log/pods}
+          hostPath: {path: {{ .Values.observability.fluentd.hostPaths.pods | quote }}}
         - name: buffer
           emptyDir: {}
         - name: tmp

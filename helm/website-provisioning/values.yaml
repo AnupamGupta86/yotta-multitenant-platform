@@ -2,17 +2,56 @@ image:
   repository: yotta/website-provisioning
   tag: local
   pullPolicy: IfNotPresent
+service:
+  name: website-provisioning
+  port: 80
+  postgresName: website-provisioning-postgres
+  ingressPath: /
+  ingressPathType: Prefix
 postgres:
-  image: postgres:16-alpine
+  secretName: provisioning-db-credentials
+  database: provisioning
+  user: provisioning
+  replicas: 1
+  mountPath: /var/lib/postgresql/data
+  pgdata: /var/lib/postgresql/data/pgdata
+  secretLength: 40
   storage:
     enabled: true
     size: 5Gi
+    storageClassName: ""
+    claimName: provisioning-postgres
+  image: postgres:16-alpine
+  port: 5432
+  startupProbe:
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 30
+  readinessProbe:
+    periodSeconds: 5
+    timeoutSeconds: 3
+  livenessProbe:
+    periodSeconds: 10
+    timeoutSeconds: 3
   resources:
     requests: {cpu: 250m, memory: 256Mi}
     limits: {cpu: "1", memory: 1Gi}
 api:
   replicas: 2
   port: 3000
+  startupProbe:
+    path: /health/live
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 60
+  livenessProbe:
+    path: /health/live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readinessProbe:
+    path: /health/ready
+    initialDelaySeconds: 5
+    periodSeconds: 5
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
@@ -21,6 +60,7 @@ ingress:
   className: nginx
   host: provisioning.myyotta.com
   clusterIssuer: local-selfsigned
+  tlsSecretName: website-provisioning-tls
 kafka:
   bootstrapServers: kafka.platform.svc.cluster.local:19092
   topic: website-events
