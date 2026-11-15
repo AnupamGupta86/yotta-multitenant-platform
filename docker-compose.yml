@@ -62,7 +62,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
       KAFKA_TOPIC: website-events
       GH_REPOSITORY: ${ORCHESTRATOR_REPOSITORY:-}
-      GH_WORKFLOW_NAME: website-app-deploy.yml
+      GH_WORKFLOW_NAME: website_app_cd.yml
       GH_REF: master
       GH_TOKEN: ${ORCHESTRATOR_GITHUB_TOKEN:-}
       ORCHESTRATOR_DRY_RUN: ${ORCHESTRATOR_DRY_RUN:-true}

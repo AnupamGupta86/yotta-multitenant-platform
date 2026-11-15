@@ -8,9 +8,9 @@ on:
       - 'scripts/build-version.sh'
       - '.trivyignore'
       - 'helm/website/**'
-      - '.github/workflows/deployment.yml'
-      - '.github/workflows/website-app-deploy.yml'
-      - '.github/workflows/service-ci.yml'
+      - '.github/workflows/website_app_ci.yml'
+      - '.github/workflows/website_app_cd.yml'
+      - '.github/workflows/service_ci.yml'
   pull_request:
     branches: [master, feature, 'feature/**']
     paths:
@@ -19,9 +19,9 @@ on:
       - 'scripts/build-version.sh'
       - '.trivyignore'
       - 'helm/website/**'
-      - '.github/workflows/deployment.yml'
-      - '.github/workflows/website-app-deploy.yml'
-      - '.github/workflows/service-ci.yml'
+      - '.github/workflows/website_app_ci.yml'
+      - '.github/workflows/website_app_cd.yml'
+      - '.github/workflows/service_ci.yml'
 permissions:
   contents: read
   packages: write
@@ -62,7 +62,7 @@ jobs:
   build-and-validate:
     if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
     needs: chart-validation
-    uses: ./.github/workflows/service-ci.yml
+    uses: ./.github/workflows/service_ci.yml
     with:
       service: website-app
       image: website-app

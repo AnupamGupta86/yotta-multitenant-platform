@@ -11,7 +11,7 @@ kafka:
     storageClassName: ""
 orchestrator:
   repository: ""
-  workflow: website-app-deploy.yml
+  workflow: website_app_cd.yml
   ref: master
   githubToken: ""
 notification:

@@ -20,7 +20,7 @@ def dispatch_website(event, environ=None):
 
     token = environ.get("GH_TOKEN")
     repository = environ.get("GH_REPOSITORY")
-    workflow = environ.get("GH_WORKFLOW_NAME", "website-app-deploy.yml")
+    workflow = environ.get("GH_WORKFLOW_NAME", "website_app_cd.yml")
     ref = environ.get("GH_REF", "master")
     if not token or not repository or "/" not in repository:
         raise RuntimeError("GH_TOKEN and GH_REPOSITORY are required to start a deployment")

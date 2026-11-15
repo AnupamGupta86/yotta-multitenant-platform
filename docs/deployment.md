@@ -40,7 +40,7 @@ curl -k -i -X POST https://provisioning.myyotta.com:8443/api/v1/websites \
 
 The API returns `202 Accepted` and an event ID. It stores the request before publishing `WebsiteProvisioningRequested`. The orchestrator consumes that event and dispatches **Website App Deployment**. The workflow installs the tenant chart with the requested domain, creating its host rule automatically; no DNS or Ingress edit is needed for each tenant while testing locally.
 
-Website App CI validates and publishes the website image. The request-triggered `website-app-deploy.yml` workflow receives the tenant, domain, image override, and correlation ID, then runs Helm on the self-hosted Mac runner. It uses the latest CI-published website image when no image override is supplied and adds the requested domain as an Ingress host without recreating the cluster.
+Website App CI validates and publishes the website image. The request-triggered `website_app_cd.yml` workflow receives the tenant, domain, image override, and correlation ID, then runs Helm on the self-hosted Mac runner. It uses the latest CI-published website image when no image override is supplied and adds the requested domain as an Ingress host without recreating the cluster.
 
 ## 4. Check the result
 

@@ -8,8 +8,8 @@ on:
       - 'scripts/build-version.sh'
       - '.trivyignore'
       - 'helm/website-provisioning/**'
-      - '.github/workflows/website-provisioning.yml'
-      - '.github/workflows/service-ci.yml'
+      - '.github/workflows/website_provisioning_ci.yml'
+      - '.github/workflows/service_ci.yml'
   pull_request:
     branches: [master, feature, 'feature/**']
     paths:
@@ -18,8 +18,8 @@ on:
       - 'scripts/build-version.sh'
       - '.trivyignore'
       - 'helm/website-provisioning/**'
-      - '.github/workflows/website-provisioning.yml'
-      - '.github/workflows/service-ci.yml'
+      - '.github/workflows/website_provisioning_ci.yml'
+      - '.github/workflows/service_ci.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -62,7 +62,7 @@ jobs:
   service:
     needs: chart-validation
     if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
-    uses: ./.github/workflows/service-ci.yml
+    uses: ./.github/workflows/service_ci.yml
     with:
       service: website-provisioning
       image: website-provisioning
