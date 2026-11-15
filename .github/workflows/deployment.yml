@@ -1,4 +1,4 @@
-name: Website API CI
+name: Website App CI
 on:
   push:
     branches: [master, feature, 'feature/**']
@@ -65,4 +65,4 @@ jobs:
     uses: ./.github/workflows/service-ci.yml
     with:
       service: website-app
-      image: website-api
+      image: website-app

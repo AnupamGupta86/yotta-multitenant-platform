@@ -30,17 +30,6 @@ services:
       kafka:
         condition: service_healthy
     restart: unless-stopped
-  database-api:
-    build: ./services/database
-    environment:
-      DATABASE_URL: postgresql://database_api:database-api-local-only@postgres:5432/database_api
-      PORT: 3000
-    ports:
-      - "127.0.0.1:3002:3000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
   kafka:
     image: apache/kafka:4.4.0
     hostname: kafka

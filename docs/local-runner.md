@@ -2,6 +2,8 @@
 
 The deployment job uses a **self-hosted Mac runner** with the labels `self-hosted`, `macOS`, and `yotta-local-k8s`. GitHub-hosted runners validate and publish the image; the Mac runner is only used for deployment into the Kind cluster running on that Mac. Intel and Apple Silicon Macs are both supported.
 
+Install Docker Desktop, Kind, kubectl, and Helm 4.x on the same Mac account that owns the cluster. The deployment scripts were validated with Helm 4.3.0; tenant upgrades use client-side apply so Helm does not conflict with the HPA when it changes a Deployment's replica count.
+
 ## Register the runner
 
 1. In the GitHub repository, open **Settings → Actions → Runners → New self-hosted runner** and select macOS and the Mac's architecture.

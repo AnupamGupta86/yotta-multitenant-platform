@@ -6,5 +6,5 @@ spec:
   minAvailable: {{ .Values.pdb.minAvailable }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: website-api
+      app.kubernetes.io/name: website-app
       app.kubernetes.io/instance: {{ .Release.Name }}

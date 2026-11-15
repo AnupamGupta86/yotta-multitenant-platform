@@ -22,23 +22,25 @@ The provisioning release owns a separate PostgreSQL StatefulSet, persistent volu
 
 ## 3. Submit a request
 
-Port-forward the Provisioning API:
+The platform Ingress serves the Provisioning API at `provisioning.myyotta.com`. Each tenant has its own Ingress host, created by the tenant Helm release. For local Kind testing, add these entries to `/etc/hosts` on the Mac:
 
-```sh
-kubectl port-forward -n platform svc/website-provisioning 3001:80
+```text
+127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com
 ```
+
+Kind maps HTTPS to port `8443`, so use that port in local requests. The local certificate is self-signed; `curl -k` skips certificate verification during development.
 
 Submit a tenant and domain to the FastAPI endpoint:
 
 ```sh
-curl -i -X POST http://127.0.0.1:3001/api/v1/websites \
+curl -k -i -X POST https://provisioning.myyotta.com:8443/api/v1/websites \
   -H 'Content-Type: application/json' \
-  -d '{"tenant":"user4","domain":"user4.localtest.me"}'
+  -d '{"tenant":"user4","domain":"user4.myyotta.com"}'
 ```
 
-The API returns `202 Accepted` and an event ID. It stores the request before publishing `WebsiteProvisioningRequested`. The orchestrator consumes that event and dispatches **Website App Deployment**.
+The API returns `202 Accepted` and an event ID. It stores the request before publishing `WebsiteProvisioningRequested`. The orchestrator consumes that event and dispatches **Website App Deployment**. The workflow installs the tenant chart with the requested domain, creating its host rule automatically; no DNS or Ingress edit is needed for each tenant while testing locally.
 
-Website API CI validates and publishes the website image. The request-triggered `website-app-deploy.yml` workflow receives the tenant, domain, image override, and correlation ID, then runs Helm on the self-hosted Mac runner. It uses the latest CI-published website image when no image override is supplied and adds the requested domain as an Ingress host without recreating the cluster.
+Website App CI validates and publishes the website image. The request-triggered `website-app-deploy.yml` workflow receives the tenant, domain, image override, and correlation ID, then runs Helm on the self-hosted Mac runner. It uses the latest CI-published website image when no image override is supplied and adds the requested domain as an Ingress host without recreating the cluster.
 
 ## 4. Check the result
 
@@ -46,8 +48,7 @@ Website API CI validates and publishes the website image. The request-triggered 
 kubectl logs -n platform deployment/event-consumer --tail=100
 kubectl logs -n platform deployment/website-provisioning --tail=100
 kubectl get all,hpa,pdb,resourcequota,ingress -n user4
-curl -k --resolve user4.localtest.me:8443:127.0.0.1 \
-  https://user4.localtest.me:8443/health/ready
+curl -k https://user4.myyotta.com:8443/health/ready
 ```
 
 Successful deployments publish `WebsiteCreated`. If Helm rollout, the HTTPS health check, or the Helm test fails, the deployment script rolls back and GitHub Actions publishes `WebsiteDeploymentFailed`. The event consumer writes a readable notification to its logs and optionally posts to `NOTIFICATION_WEBHOOK_URL`. The deployment workflow uploads Kubernetes resource and event logs as a 14-day artifact.
@@ -55,7 +56,7 @@ Successful deployments publish `WebsiteCreated`. If Helm rollout, the HTTPS heal
 For direct deployment of the three sample tenants, use:
 
 ```sh
-IMAGE=ghcr.io/<owner>/website-api:<tag> \\
+IMAGE=ghcr.io/<owner>/website-app:<tag> \\
 EVENT_IMAGE=ghcr.io/<owner>/website-event-consumer:<tag> \\
 PULL_IMAGE=true ./scripts/deploy-platform.sh
 ```

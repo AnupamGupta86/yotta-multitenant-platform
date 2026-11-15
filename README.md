@@ -70,14 +70,14 @@ python3 scripts/load_test.py --tenant user1 --seconds 180 --workers 40
 
 ## CI/CD and local deployment
 
-Service workflows validate and publish Python service images on `master` and feature branches. Each published image gets a unique UTC timestamp tag down to seconds plus the GitHub run ID, while commit tags remain available for tracing. Pull requests run the same validation without publishing. Website API CI builds and publishes the app image; a separate website-app deployment pipeline runs on the Mac only after a website request is accepted by Kafka. Provisioning deployment is manual and accepts a selected published image tag. The Platform and monitoring workflow validates and deploys the pinned cluster add-on charts, platform chart, Fluentd image, and Prometheus/Grafana release through Helm.
+Service workflows validate and publish Python service images on `master` and feature branches. Each published image gets a unique UTC timestamp tag down to seconds plus the GitHub run ID, while commit tags remain available for tracing. Pull requests run the same validation without publishing. Website App CI builds and publishes the `website-app` image; a separate website-app deployment pipeline runs on the Mac only after a website request is accepted by Kafka. Provisioning deployment is manual and accepts a selected published image tag. The Platform and monitoring workflow validates and deploys the pinned cluster add-on charts, platform chart, Fluentd image, and Prometheus/Grafana release through Helm.
 
 CI checks Python style and unit tests, scans Python code and dependencies, checks for committed secrets, lints Dockerfiles, scans built images, and starts each API image against PostgreSQL to check its health endpoint. The Kafka workflow also sends an event through a real local broker. Helm charts are linted, rendered, checked against Kubernetes schemas, and scanned for deployment security settings.
 
 To deploy the three sample tenants manually through Helm:
 
 ```sh
-IMAGE=ghcr.io/<owner>/website-api:<image-tag> \\
+IMAGE=ghcr.io/<owner>/website-app:<image-tag> \\
 EVENT_IMAGE=ghcr.io/<owner>/website-event-consumer:<image-tag> \\
 PULL_IMAGE=true ./scripts/deploy-platform.sh
 ```

@@ -79,12 +79,27 @@ spec:
             - name: postgres-run
               mountPath: /var/run/postgresql
       volumes:
+        {{- if not .Values.database.storage.enabled }}
         - name: data
           emptyDir: {}
+        {{- end }}
         - name: tmp
           emptyDir: {}
         - name: postgres-run
           emptyDir: {}
+  {{- if .Values.database.storage.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.database.storage.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.database.storage.size | quote }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: Service

@@ -19,6 +19,8 @@ spec:
   template:
     metadata:
       labels: {app: loki}
+      annotations:
+        checksum/config: {{ .Files.Get "files/loki-config.yaml" | sha256sum }}
     spec:
       securityContext:
         fsGroup: 10001

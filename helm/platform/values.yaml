@@ -1,21 +1,14 @@
 observabilityNamespace: observability
 images:
-  databaseApi: yotta/database-api:local
   eventConsumer: yotta/event-consumer:local
-  postgres: postgres:16-alpine
   kafka: apache/kafka:4.4.0
   loki: grafana/loki:3.2.1
   fluentd: yotta/fluentd-loki:local
-api:
-  replicas: 1
-  port: 3000
-  resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: 500m, memory: 512Mi}
-database:
-  resources:
-    requests: {cpu: 250m, memory: 256Mi}
-    limits: {cpu: "1", memory: 1Gi}
+kafka:
+  storage:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
 orchestrator:
   repository: ""
   workflow: website-app-deploy.yml

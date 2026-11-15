@@ -31,7 +31,7 @@ jobs:
     env:
       TENANT: ${{ inputs.tenant }}
       DOMAIN: ${{ inputs.domain }}
-      IMAGE: ${{ inputs.image || format('ghcr.io/{0}/website-api:latest', github.repository_owner) }}
+      IMAGE: ${{ inputs.image || format('ghcr.io/{0}/website-app:latest', github.repository_owner) }}
       EVENT_IMAGE: ghcr.io/${{ github.repository_owner }}/website-event-consumer:latest
       CORRELATION_ID: ${{ inputs.correlation_id || '' }}
     steps:

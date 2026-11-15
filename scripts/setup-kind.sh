@@ -27,9 +27,8 @@ helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
 
 docker build -t yotta/fluentd-loki:local -f helm/monitoring/fluentd/Dockerfile helm/monitoring/fluentd
 kind load docker-image yotta/fluentd-loki:local --name yotta-platform
-docker build -t yotta/database-api:local services/database
 docker build -t yotta/event-consumer:local services/event-consumer
-kind load docker-image yotta/database-api:local yotta/event-consumer:local --name yotta-platform
+kind load docker-image yotta/event-consumer:local --name yotta-platform
 
 helm upgrade --install platform helm/platform \
   --namespace platform --create-namespace --take-ownership \
@@ -37,7 +36,6 @@ helm upgrade --install platform helm/platform \
   --set-string orchestrator.githubToken="$ORCHESTRATOR_GITHUB_TOKEN" \
   --set-string notification.webhookUrl="${NOTIFICATION_WEBHOOK_URL:-}" \
   --wait --timeout 15m
-kubectl rollout status deployment/database-api --namespace platform --timeout=5m
 kubectl rollout status deployment/event-consumer --namespace platform --timeout=5m
 echo "Platform is ready. Deploy Day 0 with the Provisioning API GitHub Actions workflow."
 echo "Kind platform is ready on HTTPS port 8443. Run: kubectl port-forward -n observability svc/prometheus-grafana 3000:80"

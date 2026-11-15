@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}
+  name: {{ .Release.Name }}-app
   labels:
-    app.kubernetes.io/name: website-api
+    app.kubernetes.io/name: website-app
     app.kubernetes.io/instance: {{ .Release.Name }}
     tenant: {{ .Values.tenant.name | quote }}
 spec:
@@ -11,12 +11,12 @@ spec:
   revisionHistoryLimit: 5
   selector:
     matchLabels:
-      app.kubernetes.io/name: website-api
+      app.kubernetes.io/name: website-app
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: website-api
+        app.kubernetes.io/name: website-app
         app.kubernetes.io/instance: {{ .Release.Name }}
         tenant: {{ .Values.tenant.name | quote }}
       annotations:
@@ -29,13 +29,20 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: website-api
+        - name: website-app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: {{ .Values.containerPort }}
               protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 60
           env:
             - name: PORT
               value: "{{ .Values.containerPort }}"

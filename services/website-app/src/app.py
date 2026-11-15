@@ -17,7 +17,7 @@ def route(method, path, ping):
         ping()
         return 200, {"status": "ready"}
     if method == "GET" and path == "/api/v1":
-        return 200, {"service": "website-api", "version": "v1"}
+        return 200, {"service": "website-app", "version": "v1"}
     if method == "GET" and path == "/api/v1/workload":
         return 200, {"result": sum(value * value for value in range(400_000))}
     return 404, {"error": "not_found"}
@@ -28,7 +28,7 @@ def metrics_text():
     with _metrics_lock:
         values = sorted(_requests.items())
     lines.extend(
-        f'yotta_http_requests_total{{service="website-api",tenant="{os.environ.get("TENANT_NAME", "local")}",endpoint="{endpoint}",status="{status}"}} {count}'
+        f'yotta_http_requests_total{{service="website-app",tenant="{os.environ.get("TENANT_NAME", "local")}",endpoint="{endpoint}",status="{status}"}} {count}'
         for (endpoint, status), count in values
     )
     return "\n".join(lines) + "\n"

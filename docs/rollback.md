@@ -15,4 +15,4 @@ To roll back manually:
 helm rollback user1 <revision> -n user1 --wait
 ```
 
-Rollback preserves the previous deployment/image but does not restore changes made inside the tenant database. The included local tenant databases use emptyDir and are intended for demonstration only.
+Rollback preserves the previous deployment/image but does not restore changes made inside the tenant database. Tenant PostgreSQL data is stored on a persistent volume claim and remains across API rollbacks and pod restarts.

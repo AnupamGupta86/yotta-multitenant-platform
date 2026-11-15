@@ -24,6 +24,9 @@ def initialize_database():
     for attempt in range(30):
         try:
             with psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=5) as connection:
+                # Multiple API replicas start together. Serialize DDL so PostgreSQL
+                # does not race while creating the table's catalog entries.
+                connection.execute("SELECT pg_advisory_xact_lock(7319, 1)")
                 connection.execute(
                     """CREATE TABLE IF NOT EXISTS website_requests (
                         tenant TEXT PRIMARY KEY,

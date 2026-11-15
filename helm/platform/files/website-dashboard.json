@@ -29,7 +29,7 @@
       "type": "logs",
       "datasource": {"type": "loki", "uid": "loki"},
       "gridPos": {"h": 11, "w": 24, "x": 0, "y": 9},
-      "targets": [{"refId": "A", "expr": "{namespace=~\"user1|user2|user3\", container=\"website-api\"}"}]
+      "targets": [{"refId": "A", "expr": "{namespace=~\"user1|user2|user3\", container=\"website-app\"}"}]
     }
   ]
 }

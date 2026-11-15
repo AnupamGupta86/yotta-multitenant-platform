@@ -3,7 +3,7 @@ import unittest
 from src.app import metrics_text, route
 
 
-class WebsiteApiTests(unittest.TestCase):
+class WebsiteAppTests(unittest.TestCase):
     def test_liveness_does_not_require_database(self):
         status, body = route("GET", "/health/live", lambda: self.fail("unexpected ping"))
         self.assertEqual((status, body), (200, {"status": "ok"}))
@@ -18,6 +18,11 @@ class WebsiteApiTests(unittest.TestCase):
         status, body = route("GET", "/unknown", lambda: None)
         self.assertEqual(status, 404)
         self.assertEqual(body["error"], "not_found")
+
+    def test_api_identifies_service_as_website_app(self):
+        status, body = route("GET", "/api/v1", lambda: None)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["service"], "website-app")
 
     def test_metrics_endpoint_exposes_prometheus_format(self):
         self.assertIn("# TYPE yotta_http_requests_total counter", metrics_text())

@@ -1,7 +1,7 @@
 tenant:
   name: user1
 image:
-  repository: ghcr.io/owner/website-api
+  repository: ghcr.io/owner/website-app
   tag: latest
   pullPolicy: IfNotPresent
 replicaCount: 2
@@ -27,7 +27,8 @@ autoscaling:
 quota:
   requestsCpu: "4"
   requestsMemory: 4Gi
-  limitsCpu: "8"
+  # Allow the eight HPA replicas plus the tenant PostgreSQL pod (1 CPU each).
+  limitsCpu: "10"
   limitsMemory: 8Gi
   pods: "20"
 serviceMonitor:
@@ -41,6 +42,10 @@ database:
   user: website
   name: website
   image: postgres:16-alpine
+  storage:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
 eventPublisher:
   enabled: false
   image: yotta/event-consumer:local

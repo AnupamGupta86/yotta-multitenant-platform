@@ -1,6 +1,6 @@
 apiVersion: v2
 name: platform
-description: Helm-managed database API, Kafka orchestrator, and local observability services
+description: Helm-managed Kafka orchestrator and local observability services
 type: application
 version: 0.1.0
 appVersion: "1.0.0"

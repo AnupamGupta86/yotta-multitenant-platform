@@ -53,6 +53,7 @@ fi
 kind load docker-image "$image" --name yotta-platform
 kind load docker-image "$event_image" --name yotta-platform
 helm upgrade --install "$release" helm/website \
+  --server-side=false \
   --namespace "$namespace" \
   --create-namespace \
   --take-ownership \
