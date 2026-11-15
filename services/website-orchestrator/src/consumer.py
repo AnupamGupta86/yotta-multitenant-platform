@@ -45,7 +45,7 @@ def dispatch_website(event, environ=None):
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "User-Agent": "yotta-deployment-orchestrator",
+            "User-Agent": "yotta-website-orchestrator",
             "X-GitHub-Api-Version": "2022-11-28",
         },
         method="POST",
@@ -132,7 +132,7 @@ def main():
 
     servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     topic = os.environ.get("KAFKA_TOPIC", "website-events")
-    group_id = os.environ.get("KAFKA_GROUP_ID", "deployment-orchestrator")
+    group_id = os.environ.get("KAFKA_GROUP_ID", "website-orchestrator")
     while True:
         consumer = None
         try:
