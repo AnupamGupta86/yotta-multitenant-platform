@@ -76,9 +76,18 @@ jobs:
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
           helm repo update prometheus-community
       - name: Upgrade platform release through Helm
+        env:
+          GHCR_REPOSITORY: ${{ github.repository }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [[ -z "$GHCR_TOKEN" ]]; then
+            echo 'Repository Actions secret GHCR_TOKEN is required.' >&2
+            exit 2
+          fi
           helm upgrade --install platform helm/platform --namespace platform --create-namespace \
             --reuse-values --set-string images.fluentd="$FLUENTD_IMAGE" \
+            --set-string orchestrator.repository="$GHCR_REPOSITORY" \
+            --set-string orchestrator.githubToken="$GHCR_TOKEN" \
             --wait --timeout 15m
           kubectl rollout status daemonset/fluentd --namespace observability --timeout=5m
       - name: Upgrade Prometheus and Grafana through Helm

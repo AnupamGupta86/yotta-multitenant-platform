@@ -53,7 +53,17 @@ jobs:
           docker pull "$IMAGE"
           kind load docker-image "$IMAGE" --name yotta-platform
       - name: Upgrade the deployment orchestrator with Helm
+        env:
+          GHCR_REPOSITORY: ${{ github.repository }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [[ -z "$GHCR_TOKEN" ]]; then
+            echo 'Repository Actions secret GHCR_TOKEN is required.' >&2
+            exit 2
+          fi
           helm upgrade --install platform helm/platform --namespace platform --reuse-values \
-            --set-string images.websiteOrchestrator="$IMAGE" --wait --timeout 10m
+            --set-string images.websiteOrchestrator="$IMAGE" \
+            --set-string orchestrator.repository="$GHCR_REPOSITORY" \
+            --set-string orchestrator.githubToken="$GHCR_TOKEN" \
+            --wait --timeout 10m
           kubectl rollout status deployment/website-orchestrator --namespace platform --timeout=5m
