@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Load shared pipeline defaults
         id: pipeline
         run: bash .github/scripts/load-pipeline-config.sh
