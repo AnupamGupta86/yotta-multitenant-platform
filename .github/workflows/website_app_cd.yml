@@ -31,8 +31,8 @@ jobs:
     env:
       TENANT: ${{ inputs.tenant }}
       DOMAIN: ${{ inputs.domain }}
-      IMAGE: ${{ inputs.image || format('ghcr.io/{0}/website-app:latest', github.repository_owner) }}
-      EVENT_IMAGE: ghcr.io/${{ github.repository_owner }}/website-event-consumer:latest
+      IMAGE: ${{ inputs.image }}
+      IMAGE_OVERRIDE: ${{ inputs.image }}
       CORRELATION_ID: ${{ inputs.correlation_id || '' }}
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +47,13 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - name: Normalize image owner for GHCR
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          if [[ -z "$IMAGE_OVERRIDE" ]]; then
+            echo "IMAGE=ghcr.io/$owner/website-app:latest" >> "$GITHUB_ENV"
+          fi
+          echo "EVENT_IMAGE=ghcr.io/$owner/website-event-consumer:latest" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

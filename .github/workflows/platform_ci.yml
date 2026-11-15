@@ -1,0 +1,186 @@
+name: Platform CI
+on:
+  push:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'helm/platform/**'
+      - 'helm/monitoring/**'
+      - 'helm/cluster-addons/**'
+      - 'kind/**'
+      - 'scripts/setup-kind.sh'
+      - 'scripts/deploy-cluster-addons.sh'
+      - 'scripts/cluster-addons.env'
+      - 'scripts/build-version.sh'
+      - 'VERSION'
+      - '.trivyignore'
+      - '.github/workflows/platform_ci.yml'
+      - '.github/workflows/platform_cd.yml'
+  pull_request:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'helm/platform/**'
+      - 'helm/monitoring/**'
+      - 'helm/cluster-addons/**'
+      - 'kind/**'
+      - 'scripts/setup-kind.sh'
+      - 'scripts/deploy-cluster-addons.sh'
+      - 'scripts/cluster-addons.env'
+      - 'scripts/build-version.sh'
+      - 'VERSION'
+      - '.trivyignore'
+      - '.github/workflows/platform_ci.yml'
+      - '.github/workflows/platform_cd.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+jobs:
+  validate:
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Add and update Helm repositories
+        run: |
+          helm repo add projectcalico https://docs.tigera.io/calico/charts
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+      - name: Lint and render the project Helm charts
+        run: |
+          helm lint helm/platform
+          mkdir -p /tmp/rendered-platform /tmp/rendered-monitoring
+          helm template platform helm/platform --namespace platform > /tmp/rendered-platform/platform.yaml
+          chart_version="$(tr -d '[:space:]' < helm/monitoring/chart-version.txt)"
+          mkdir -p /tmp/monitoring-chart
+          helm pull prometheus-community/kube-prometheus-stack \
+            --version "$chart_version" --untar --untardir /tmp/monitoring-chart
+          helm lint /tmp/monitoring-chart/kube-prometheus-stack \
+            --values helm/monitoring/values.yaml
+          helm template prometheus /tmp/monitoring-chart/kube-prometheus-stack \
+            --namespace observability --values helm/monitoring/values.yaml \
+            > /tmp/rendered-monitoring/prometheus.yaml
+      - name: Render pinned cluster add-on Helm charts
+        run: |
+          source scripts/cluster-addons.env
+          mkdir -p /tmp/rendered-addons
+          helm template calico-crds helm/cluster-addons/calico-crds \
+            --namespace tigera-operator --include-crds \
+            > /tmp/rendered-addons/calico-crds.yaml
+          helm template calico projectcalico/tigera-operator \
+            --version "$CALICO_VERSION" --namespace tigera-operator \
+            --set 'installation.calicoNetwork.ipPools[0].cidr=192.168.0.0/16' \
+            > /tmp/rendered-addons/calico.yaml
+          helm template ingress-nginx ingress-nginx/ingress-nginx \
+            --version "$INGRESS_NGINX_VERSION" --namespace ingress-nginx \
+            --set controller.kind=DaemonSet \
+            --set controller.hostPort.enabled=true \
+            --set-string controller.nodeSelector.ingress-ready=true \
+            --set-json 'controller.tolerations=[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]' \
+            --set controller.service.type=ClusterIP \
+            > /tmp/rendered-addons/ingress-nginx.yaml
+          helm template metrics-server metrics-server/metrics-server \
+            --version "$METRICS_SERVER_VERSION" --namespace kube-system \
+            --set-string 'args[0]=--kubelet-insecure-tls' \
+            > /tmp/rendered-addons/metrics-server.yaml
+          helm template cert-manager oci://quay.io/jetstack/charts/cert-manager \
+            --version "$CERT_MANAGER_VERSION" --namespace cert-manager \
+            --set crds.enabled=true \
+            > /tmp/rendered-addons/cert-manager.yaml
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: Validate rendered platform and monitoring resources
+        run: kubeconform -strict -ignore-missing-schemas /tmp/rendered-platform/*.yaml /tmp/rendered-monitoring/*.yaml /tmp/rendered-addons/*.yaml
+      - name: Scan project platform resources for security misconfigurations
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: /tmp/rendered-platform
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+      - name: Scan pinned monitoring chart resources
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: /tmp/rendered-monitoring
+          trivyignores: helm/monitoring/trivyignore
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+      - name: Lint Fluentd Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: helm/monitoring/fluentd/Dockerfile
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Fluentd image for validation
+        uses: docker/build-push-action@v6
+        with:
+          context: helm/monitoring/fluentd
+          load: true
+          tags: local/yotta/fluentd-loki:${{ github.sha }}
+      - name: Validate Fluentd image and mounted configuration
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/helm/platform/files/fluent.conf:/fluentd/etc/fluent.conf:ro" \
+            -v /tmp:/var/log/fluentd \
+            local/yotta/fluentd-loki:${{ github.sha }} \
+            fluentd --dry-run -c /fluentd/etc/fluent.conf
+      - name: Scan Fluentd image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: local/yotta/fluentd-loki:${{ github.sha }}
+          trivyignores: .trivyignore
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+  publish:
+    needs: validate
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      owner: ${{ steps.version.outputs.owner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Calculate unique image version
+        id: version
+        run: |
+          echo "version=$(./scripts/build-version.sh)" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - name: Authenticate to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish Fluentd image
+        uses: docker/build-push-action@v6
+        with:
+          context: helm/monitoring/fluentd
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner }}/fluentd-loki:${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.version.outputs.owner }}/fluentd-loki:${{ github.sha }}
+          provenance: true
+          sbom: true

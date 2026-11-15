@@ -59,7 +59,7 @@ For this local demo, `*.localtest.me` resolves to loopback and the self-signed c
 - TLS Ingress, liveness/readiness probes, CPU and memory requests/limits, quotas, and PodDisruptionBudgets.
 - CPU/memory HPA, a Python load generator, Prometheus, Grafana dashboards, Fluentd, and Loki.
 - Kafka request and outcome events, workflow dispatch, Helm rollback, Docker image scans, and build evidence uploaded as a GitHub Actions artifact.
-- A timestamped image version such as `1.0.0-20261115040530-run123456789`; edit `VERSION` to change the major, minor, or patch number.
+- A timestamped image version such as `1.0.0-20261115081354-43693315269`; edit `VERSION` to change the major, minor, or patch number.
 
 Run the load generator while watching the HPA:
 
@@ -70,7 +70,7 @@ python3 scripts/load_test.py --tenant user1 --seconds 180 --workers 40
 
 ## CI/CD and local deployment
 
-Service workflows validate and publish Python service images on `master` and feature branches. Each published image gets a unique UTC timestamp tag down to seconds plus the GitHub run ID, while commit tags remain available for tracing. Pull requests run the same validation without publishing. Website App CI builds and publishes the `website-app` image; a separate website-app deployment pipeline runs on the Mac only after a website request is accepted by Kafka. Provisioning deployment is manual and accepts a selected published image tag. The Platform and monitoring workflow validates and deploys the pinned cluster add-on charts, platform chart, Fluentd image, and Prometheus/Grafana release through Helm.
+Service workflows validate and publish Python service images on `master` and feature branches. Each published image gets a unique UTC timestamp tag down to seconds plus the GitHub run ID, while commit tags remain available for tracing. Pull requests run the same validation without publishing. Website App CI builds and publishes the `website-app` image; a separate website-app deployment pipeline runs on the Mac only after a website request is accepted by Kafka. Provisioning deployment is manual and accepts a selected published image tag. Platform CI validates the charts and Fluentd image and publishes a versioned image; the separate manual Platform Deployment workflow installs cluster add-ons, the platform chart, and Prometheus/Grafana through Helm on the Mac.
 
 CI checks Python style and unit tests, scans Python code and dependencies, checks for committed secrets, lints Dockerfiles, scans built images, and starts each API image against PostgreSQL to check its health endpoint. The Kafka workflow also sends an event through a real local broker. Helm charts are linted, rendered, checked against Kubernetes schemas, and scanned for deployment security settings.
 

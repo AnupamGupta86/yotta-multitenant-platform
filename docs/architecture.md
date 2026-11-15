@@ -41,7 +41,7 @@ The orchestrator uses a stable Kafka consumer group and commits an offset only a
 
 After Helm installs the tenant, the HTTPS health check must pass. The chart's Helm test then publishes `WebsiteCreated`. If installation, health checks, or the Helm test fail, the deployment script rolls back and the Actions workflow publishes `WebsiteDeploymentFailed`. The event consumer sends a short notification to logs (also collected by Fluentd and Loki), or to an optional configured webhook. Only `WebsiteProvisioningRequested` starts a deployment.
 
-Published images use a unique timestamped version such as `1.0.0-20261115040530-run123456789`; the base version comes from `VERSION` and the workflow run ID prevents same-second collisions.
+Published images use a unique timestamped version such as `1.0.0-20261115081354-43693315269`; the base version comes from `VERSION` and the workflow run ID prevents same-second collisions.
 
 ## Scaling and observability
 

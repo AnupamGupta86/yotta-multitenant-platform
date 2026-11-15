@@ -32,7 +32,7 @@ jobs:
       group: local-platform-release
       cancel-in-progress: false
     env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/website-provisioning:${{ inputs.image_tag }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,6 +54,10 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - name: Normalize image owner for GHCR
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=ghcr.io/$owner/website-provisioning:$IMAGE_TAG" >> "$GITHUB_ENV"
       - name: Pull and load the selected API image
         run: |
           docker pull "$IMAGE"

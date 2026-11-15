@@ -9,4 +9,4 @@ fi
 
 timestamp="$(date -u +'%Y%m%d%H%M%S')"
 run_id="${GITHUB_RUN_ID:-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')}"
-printf '%s-%s-run%s\n' "$version_base" "$timestamp" "$run_id"
+printf '%s-%s-%s\n' "$version_base" "$timestamp" "$run_id"
