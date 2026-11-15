@@ -13,7 +13,7 @@ permissions:
 jobs:
   validate-chart:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,7 +28,7 @@ jobs:
   deploy:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
     concurrency:
       group: local-platform-release
       cancel-in-progress: false
