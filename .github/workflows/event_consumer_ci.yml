@@ -1,35 +1,18 @@
 name: Event Consumer CI
 on:
   push:
-    branches: [master, feature, 'feature/**']
-    paths:
-      - 'services/event-consumer/**'
-      - 'docker-compose.yml'
-      - 'VERSION'
-      - 'scripts/build-version.sh'
-      - '.trivyignore'
-      - '.github/workflows/event_consumer_ci.yml'
-      - '.github/workflows/event_consumer_cd.yml'
+    branches: ['**']
   pull_request:
-    branches: [master, feature, 'feature/**']
-    paths:
-      - 'services/event-consumer/**'
-      - 'docker-compose.yml'
-      - 'VERSION'
-      - 'scripts/build-version.sh'
-      - '.trivyignore'
-      - '.github/workflows/event_consumer_ci.yml'
-      - '.github/workflows/event_consumer_cd.yml'
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 permissions:
   contents: read
-  packages: write
 concurrency:
   group: event-consumer-ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   validate:
-    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,7 +95,7 @@ jobs:
           echo 'Consumer did not log the published WebsiteProvisioningRequested event' >&2
           exit 1
   publish:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    if: ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
     needs: validate
     runs-on: ubuntu-latest
     permissions:
@@ -161,9 +144,11 @@ jobs:
           IMAGE_OWNER: ${{ steps.version.outputs.owner }}
           IMAGE_TAG: ${{ steps.version.outputs.version }}
         run: |
-          image="ghcr.io/$IMAGE_OWNER/website-event-consumer:$IMAGE_TAG"
           {
-            echo '### Deployment image'
+            echo '### Deployment image tag'
             echo
-            echo "Use this exact image tag in the Event Consumer Deployment workflow: $image"
+            echo "$IMAGE_TAG"
+            echo
+            echo 'Enter this value in the image_tag field of the Event Consumer Deployment workflow.'
+            echo "Full image: ghcr.io/$IMAGE_OWNER/website-event-consumer:$IMAGE_TAG"
           } >> "$GITHUB_STEP_SUMMARY"

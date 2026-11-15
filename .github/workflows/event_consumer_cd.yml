@@ -1,8 +1,5 @@
 name: Event Consumer Deployment
 on:
-  workflow_run:
-    workflows: ['Event Consumer CI']
-    types: [completed]
   workflow_dispatch:
     inputs:
       image_tag:
@@ -17,21 +14,21 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy-platform:
-    if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master') || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
     runs-on: [self-hosted, macOS, yotta-local-k8s]
+    environment: platform
     permissions:
       contents: read
       packages: read
     env:
-      IMAGE_TAG: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.image_tag }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
       - name: Validate the selected image tag
         env:
-          IMAGE_TAG: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.image_tag }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
             echo 'image_tag must be a valid container image tag.' >&2
