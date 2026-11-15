@@ -1,3 +1,4 @@
+# No-op change to allow workflow-triggering commits.
 name: Platform Deployment
 on:
   workflow_dispatch:

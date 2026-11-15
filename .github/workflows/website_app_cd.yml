@@ -1,3 +1,4 @@
+# No-op change to allow workflow-triggering commits.
 name: Website App Deployment
 on:
   workflow_dispatch:
@@ -25,7 +26,7 @@ concurrency:
   group: local-platform-release
   cancel-in-progress: false
 jobs:
-  deploy-tenant:
+  deploy:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
     runs-on: [self-hosted, macOS, yotta-local-k8s]
     env:

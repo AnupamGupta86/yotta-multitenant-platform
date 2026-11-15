@@ -1,3 +1,4 @@
+# No-op change to allow workflow-triggering commits.
 name: Website Provisioning Deployment
 on:
   workflow_dispatch:
@@ -24,7 +25,7 @@ jobs:
         run: |
           helm lint helm/website-provisioning
           helm template website-provisioning helm/website-provisioning --namespace platform > /tmp/website-provisioning.yaml
-  deploy-day0:
+  deploy:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted]

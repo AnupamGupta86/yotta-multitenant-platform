@@ -1,3 +1,4 @@
+# No-op change to allow workflow-triggering commits.
 name: Event Consumer CI
 on:
   push:
