@@ -38,7 +38,7 @@ class DeploymentOrchestratorTests(unittest.TestCase):
         self.assertEqual(request.full_url, "https://api.github.com/repos/example/platform/actions/workflows/website_app_cd.yml/dispatches")
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
-        self.assertEqual(request.get_header("User-agent"), "yotta-deployment-orchestrator")
+        self.assertEqual(request.get_header("User-agent"), "yotta-website-orchestrator")
         payload = json.loads(request.data)
         self.assertEqual(payload["ref"], "master")
         self.assertEqual(payload["inputs"]["tenant"], "user2")
