@@ -86,7 +86,7 @@ class DeploymentOrchestratorTests(unittest.TestCase):
             "tenant": "user2",
             "domain": "shop.example.com",
         }
-        with self.assertLogs("deployment-orchestrator", level="INFO") as captured:
+        with self.assertLogs("website-orchestrator", level="INFO") as captured:
             notify_outcome(event, {})
         self.assertIn("NOTIFICATION: Website user2 is ready", captured.output[0])
 
