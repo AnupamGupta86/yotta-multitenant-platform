@@ -25,9 +25,6 @@ permissions:
   contents: read
   packages: write
   security-events: write
-concurrency:
-  group: local-platform-release
-  cancel-in-progress: false
 jobs:
   chart-validation:
     if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))

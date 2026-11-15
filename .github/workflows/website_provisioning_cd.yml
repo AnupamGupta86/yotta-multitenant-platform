@@ -9,9 +9,6 @@ on:
 permissions:
   contents: read
   packages: read
-concurrency:
-  group: local-platform-release
-  cancel-in-progress: false
 jobs:
   validate-chart:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
@@ -31,6 +28,9 @@ jobs:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted]
+    concurrency:
+      group: local-platform-release
+      cancel-in-progress: false
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/website-provisioning:${{ inputs.image_tag }}
     steps:

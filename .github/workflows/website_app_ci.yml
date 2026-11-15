@@ -22,6 +22,7 @@ on:
       - '.github/workflows/website_app_ci.yml'
       - '.github/workflows/website_app_cd.yml'
       - '.github/workflows/service_ci.yml'
+  workflow_dispatch:
 permissions:
   contents: read
   packages: write

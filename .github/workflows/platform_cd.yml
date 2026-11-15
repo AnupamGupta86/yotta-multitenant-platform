@@ -33,9 +33,6 @@ permissions:
   contents: read
   packages: write
   security-events: write
-concurrency:
-  group: local-platform-release
-  cancel-in-progress: false
 jobs:
   validate:
     if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
@@ -186,6 +183,9 @@ jobs:
     needs: publish
     if: needs.publish.result == 'success' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
+    concurrency:
+      group: local-platform-release
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: read
