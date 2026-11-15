@@ -14,13 +14,18 @@ helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-u
 helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ --force-update
 helm repo update projectcalico ingress-nginx metrics-server
 
-helm upgrade --install calico-crds projectcalico/projectcalico.org.v3 \
-  --version "$CALICO_VERSION" --namespace tigera-operator --create-namespace \
-  --take-ownership --wait --timeout 10m
+helm upgrade --install calico-crds helm/cluster-addons/calico-crds \
+  --namespace tigera-operator --create-namespace --wait --timeout 10m
 helm upgrade --install calico projectcalico/tigera-operator \
   --version "$CALICO_VERSION" --namespace tigera-operator \
   --set 'installation.calicoNetwork.ipPools[0].cidr=192.168.0.0/16' \
-  --wait --timeout 10m
+  --force-conflicts --wait --timeout 10m
+for _ in {1..60}; do
+  if kubectl get daemonset calico-node --namespace calico-system >/dev/null 2>&1; then
+    break
+  fi
+  sleep 5
+done
 kubectl rollout status daemonset/calico-node --namespace calico-system --timeout=10m
 kubectl wait --for=condition=Ready nodes --all --timeout=10m
 

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: calico-crds
+description: Calico and Tigera Operator CRDs from the pinned Project Calico chart
+type: application
+version: 3.33.0
+appVersion: 3.33.0

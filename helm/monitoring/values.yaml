@@ -3,6 +3,11 @@ grafana:
   adminPassword: local-demo-only-change-me
   rbac:
     namespaced: true
+  sidecar:
+    dashboards:
+      searchNamespace: observability
+    datasources:
+      searchNamespace: observability
   persistence:
     enabled: false
   additionalDataSources:

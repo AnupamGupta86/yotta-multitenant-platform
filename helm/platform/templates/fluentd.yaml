@@ -55,10 +55,24 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
         seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: prepare-private-temp-directory
+          image: {{ .Values.images.fluentd | quote }}
+          command: [sh, -ec, "mkdir -p /tmp/fluentd && chmod 700 /tmp/fluentd"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
       containers:
         - name: fluentd
           image: {{ .Values.images.fluentd | quote }}
           imagePullPolicy: IfNotPresent
+          env:
+            - {name: TMPDIR, value: /tmp/fluentd}
           resources: {{- toYaml .Values.observability.fluentd.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false

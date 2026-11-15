@@ -31,12 +31,25 @@ spec:
     metadata:
       labels: {app.kubernetes.io/name: kafka}
     spec:
+      automountServiceAccountToken: false
       securityContext:
         fsGroup: 1000
         runAsGroup: 1000
         runAsNonRoot: true
         runAsUser: 1000
         seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: prepare-kafka-config
+          image: {{ .Values.images.kafka | quote }}
+          command: [sh, -ec, "cp -r /opt/kafka/config/. /config/ && chmod -R u+w /config"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: kafka-config, mountPath: /config}
       containers:
         - name: kafka
           image: {{ .Values.images.kafka | quote }}
@@ -71,9 +84,11 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
           volumeMounts:
+            - {name: kafka-config, mountPath: /opt/kafka/config}
             - {name: data, mountPath: /var/lib/kafka/data}
             - {name: tmp, mountPath: /tmp}
       volumes:
+        - {name: kafka-config, emptyDir: {}}
         - {name: data, emptyDir: {}}
         - {name: tmp, emptyDir: {}}
 ---
