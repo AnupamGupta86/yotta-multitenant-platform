@@ -3,15 +3,8 @@ image:
   repository: yotta/aiops-pod-doctor
   tag: local
   pullPolicy: IfNotPresent
-# Optional always-on variant that checks every pollIntervalSeconds and serves /reports.
-# Off by default: the CronJob above is the doctor.
-liveDoctor:
-  enabled: false
-replicas: 1
-port: 3000
 
-# How the doctor works
-pollIntervalSeconds: 5      # look for failing pods this often
+# Which pods are checked
 watchNamespaces: ""         # comma separated; empty = every namespace
 ignoreNamespaces: ""        # comma separated namespaces to skip
 logTailLines: 100           # log lines sent to Grok per container run
@@ -25,8 +18,6 @@ grok:
   # from the GROK_API_KEY secret of the 'aiops-deployment' GitHub environment.
   # Without it the doctor still runs and answers with built-in rules.
   existingSecret: aiops-grok-api-key
-  # Changed by the CD pipeline when the key changes, so the pod restarts and reads the new key
-  keyRevision: ""
 
 # E-mail reports (sent by the CronJob)
 email:

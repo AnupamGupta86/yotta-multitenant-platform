@@ -262,5 +262,3 @@ which writes the deployable tag (`1.0.0-20261116041814`).
 ![AIOps CD and report](proof/screenshots/32-aiops-cd-report.png)
 
 Still to add: the full report text below that table (Root cause, Evidence, Workaround now, Permanent fix).
-
-Earlier validation reports are kept in [docs/history/](history/).

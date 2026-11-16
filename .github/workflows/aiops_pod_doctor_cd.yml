@@ -85,8 +85,6 @@ jobs:
           printf '%s' "$GROK_API_KEY" | kubectl create secret generic "$AIOPS_GROK_SECRET" \
             --namespace "$AIOPS_NAMESPACE" --from-file=api-key=/dev/stdin \
             --dry-run=client -o yaml | kubectl apply -f -
-          # A short fingerprint (not the key) makes the pod restart when the key changes
-          echo "KEY_REVISION=$(printf '%s' "$GROK_API_KEY" | shasum -a 256 | cut -c1-12)" >> "$GITHUB_ENV"
       - name: Store the e-mail login in the cluster
         env:
           # From Settings -> Environments -> aiops-deployment -> Environment secrets
@@ -120,7 +118,6 @@ jobs:
             --set-string image.tag="${IMAGE##*:}" \
             --set-string grok.existingSecret="$AIOPS_GROK_SECRET" \
             --set-string grok.model="$GROK_MODEL" \
-            --set-string grok.keyRevision="$KEY_REVISION" \
             --set-string email.existingSecret="$AIOPS_SMTP_SECRET" \
             --set-string email.smtpHost="$SMTP_HOST" \
             --set-string email.smtpPort="$SMTP_PORT" \

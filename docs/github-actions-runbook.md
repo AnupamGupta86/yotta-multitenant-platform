@@ -81,7 +81,6 @@ yotta-multitenant-platform/
 │   ├── build-version.sh          Image tag 1.0.0-YYYYMMDDHHMMSS
 │   ├── helm-retry.sh             Retry wrapper for transient Helm/network errors
 │   ├── load_test.py              CPU load generator for the HPA demo
-│   ├── verify-deployment.sh      Snapshot of one tenant (resources, HTTPS, events) into output/
 │   ├── collect-proof.sh          Proof-of-work evidence for all five assignment items
 │   └── setup-deployment-approvals.sh  Creates the GitHub approval environments
 │
@@ -102,8 +101,7 @@ yotta-multitenant-platform/
     ├── proof-of-work.md          How to demonstrate each assignment item
     ├── local-runner.md           Self-hosted runner setup
     ├── proof/                    Evidence folders written by collect-proof.sh (+ screenshots)
-    ├── logs/                     Log of a full local installation
-    └── history/                  Earlier validation reports
+    └── logs/                     Log of a full local installation
 ```
 
 ---

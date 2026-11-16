@@ -27,6 +27,7 @@ from src.detector import PodFailure, find_failure
 from src.kube import KubeClient, KubeError
 from src.llm import GrokClient, GrokError, build_prompt, fallback_analysis, redact
 from src.rca import describe_pod
+from src.report import ai_begin, ai_end, ai_label
 
 log = logging.getLogger("aiops-pod-doctor")
 
@@ -103,6 +104,9 @@ class PodDoctor:
             "message": failure.message,
             "restart_count": failure.restart_count,
             "analysed_by": source,
+            # Marks the analysis as AI-generated (Grok) or rule-based, for every place it is shown
+            "ai_generated": source == "grok",
+            "ai_model": self.settings.grok_model if source == "grok" else "",
             "analysis": analysis,
             "pod_details": pod_details,
             "events": "\n".join(
@@ -117,8 +121,8 @@ def format_report(report: dict) -> str:
     line = "=" * 72
     return (
         f"\n{line}\nAIOPS REPORT  {report['namespace']}/{report['pod']}  container={report['container']}\n"
-        f"Failure: {report['reason']}  restarts={report['restart_count']}  analysed by: {report['analysed_by']}\n"
-        f"{line}\n{report['analysis']}\n{line}"
+        f"Failure: {report['reason']}  restarts={report['restart_count']}  analysis: {ai_label(report)}\n"
+        f"{line}\n{ai_begin(report)}{report['analysis']}{ai_end(report)}\n{line}"
     )
 
 
