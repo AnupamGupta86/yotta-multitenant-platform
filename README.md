@@ -160,6 +160,8 @@ for outcomes (optionally also to `NOTIFICATION_WEBHOOK_URL`). Events share a `co
 | `platform_ci` | GitHub-hosted | validates add-on, platform and monitoring charts; builds and publishes the Fluentd image |
 | `*_cd` | self-hosted Mac | validate the tag, wait for approval, load the image into Kind, `helm upgrade --install`, verify |
 
+Step-by-step reference for every pipeline (inputs, secrets, run order, troubleshooting): [docs/github-actions-runbook.md](docs/github-actions-runbook.md).
+
 - Pull requests run the same checks without publishing. Pushes to `master`, `feature`, `feature/**` publish.
 - Image tag: `MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS` (UTC build time), e.g. `1.0.0-20261116010802`;
   the version comes from `VERSION`. CD rejects any other format.
@@ -186,4 +188,4 @@ instead of Helm values, a managed PostgreSQL and a replicated Kafka, and GitHub 
 ## Documents
 
 [Deployment](docs/deployment.md) · [Architecture](docs/architecture.md) · [Rollback](docs/rollback.md) ·
-[Proof of work](docs/proof-of-work.md) · [Self-hosted runner](docs/local-runner.md)
+[Proof of work](docs/proof-of-work.md) · [GitHub Actions runbook](docs/github-actions-runbook.md) · [Self-hosted runner](docs/local-runner.md)
