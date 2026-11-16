@@ -1,4 +1,4 @@
-# CI retrigger marker: 2026-11-15.
+# CI retrigger marker: 2026-11-16 end-to-end check.
 name: Website App CI
 on:
   push:
