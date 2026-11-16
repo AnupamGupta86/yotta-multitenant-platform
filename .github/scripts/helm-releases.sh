@@ -3,14 +3,19 @@
 # and the approved deploy job with HELM_MODE=apply, so reviewers approve exactly what gets applied.
 # Usage: .github/scripts/helm-releases.sh <platform|monitoring|orchestrator|provisioning|aiops>
 # Needs the variables from .github/pipeline-config.env plus the ones named under each component.
+# Every release works as a first install or an upgrade: upgrade --install, --create-namespace, and
+# --reset-then-reuse-values (keeps values set earlier, e.g. a webhook URL, but picks up new chart defaults).
 set -euo pipefail
 
 release_cmd="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/helm-release.sh"
 
 case "${1:?usage: helm-releases.sh <platform|monitoring|orchestrator|provisioning|aiops>}" in
-  platform)  # needs FLUENTD_IMAGE, GHCR_REPOSITORY
+  platform)  # needs FLUENTD_IMAGE, GHCR_REPOSITORY; ORCHESTRATOR_IMAGE only on a first install
+    orchestrator_args=()
+    [[ -n "${ORCHESTRATOR_IMAGE:-}" ]] && orchestrator_args=(--set-string images.websiteOrchestrator="$ORCHESTRATOR_IMAGE")
     "$release_cmd" "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" --create-namespace \
-      --reuse-values --set-string images.fluentd="$FLUENTD_IMAGE" \
+      --reset-then-reuse-values --set-string images.fluentd="$FLUENTD_IMAGE" \
+      ${orchestrator_args[@]+"${orchestrator_args[@]}"} \
       --set-string orchestrator.repository="$GHCR_REPOSITORY" \
       --set-string orchestrator.githubToken= \
       --wait --timeout "$PLATFORM_HELM_TIMEOUT"
@@ -22,7 +27,7 @@ case "${1:?usage: helm-releases.sh <platform|monitoring|orchestrator|provisionin
       --values helm/monitoring/values.yaml --wait --timeout "$PLATFORM_HELM_TIMEOUT"
     ;;
   orchestrator)  # needs IMAGE (website-orchestrator), GHCR_REPOSITORY
-    "$release_cmd" "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" --reuse-values \
+    "$release_cmd" "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" --reset-then-reuse-values \
       --set-string images.websiteOrchestrator="$IMAGE" \
       --set-string orchestrator.repository="$GHCR_REPOSITORY" \
       --set-string orchestrator.githubToken= \
@@ -30,14 +35,14 @@ case "${1:?usage: helm-releases.sh <platform|monitoring|orchestrator|provisionin
     ;;
   provisioning)  # needs IMAGE (website-provisioning)
     "$release_cmd" "$WEBSITE_PROVISIONING_IMAGE" helm/website-provisioning \
-      --namespace "$PLATFORM_NAMESPACE" \
+      --namespace "$PLATFORM_NAMESPACE" --create-namespace \
       --set-string image.repository="${IMAGE%:*}" \
       --set-string image.tag="${IMAGE##*:}" \
       --wait --timeout "$SERVICE_HELM_TIMEOUT"
     ;;
   aiops)  # needs IMAGE (aiops-pod-doctor), GROK_MODEL, SMTP_HOST, SMTP_PORT
     "$release_cmd" "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm \
-      --namespace "$AIOPS_NAMESPACE" \
+      --namespace "$AIOPS_NAMESPACE" --create-namespace \
       --set-string image.repository="${IMAGE%:*}" \
       --set-string image.tag="${IMAGE##*:}" \
       --set-string grok.existingSecret="$AIOPS_GROK_SECRET" \

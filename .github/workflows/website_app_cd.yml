@@ -35,8 +35,38 @@ concurrency:
   group: local-platform-release
   cancel-in-progress: false
 jobs:
-  review-changes:
+  validate-chart:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: ubuntu-latest
+    # Lint, render and schema-check (kubeconform) the chart with this run's values before anything is reviewed or approved.
+    permissions:
+      contents: read
+    env:
+      TENANT: ${{ inputs.tenant }}
+      DOMAIN: ${{ inputs.domain }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ steps.pipeline.outputs.helm_version }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Validate the website chart for this tenant
+        run: |
+          bash .github/scripts/validate-chart.sh "$TENANT" helm/website-app --namespace "$TENANT" \
+            --set tenant.name="$TENANT" --set ingress.host="$DOMAIN" --set database.name="$TENANT" \
+            --set eventPublisher.enabled=true
+  review-changes:
+    needs: validate-chart
+    if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
     # No approval: chooses the images and compares the tenant's deployed release with this change
     # (helm diff), so the reviewer reads the diff before approving the deploy job.
@@ -64,7 +94,8 @@ jobs:
       - name: Confirm local Kind cluster and platform services
         run: |
           kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
-          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
+          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE" >/dev/null \
+            || { echo "::error::The platform release is not installed yet (Kafka, orchestrator). Run Platform Deployment first."; exit 1; }
       - name: Choose the images (requested tags, or newest website-app + running orchestrator)
         id: images
         env:
@@ -108,7 +139,8 @@ jobs:
       - name: Confirm local Kind cluster and platform services
         run: |
           kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
-          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
+          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE" >/dev/null \
+            || { echo "::error::The platform release is not installed yet (Kafka, orchestrator). Run Platform Deployment first."; exit 1; }
       - name: Authenticate to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

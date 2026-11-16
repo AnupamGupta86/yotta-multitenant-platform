@@ -5,6 +5,9 @@
 apiVersion: v1
 kind: Secret
 metadata:
+  annotations:
+    # Survives helm uninstall, so a reinstall reuses the password of the data already on the volume
+    helm.sh/resource-policy: keep
   name: {{ $secretName }}
 type: Opaque
 stringData:

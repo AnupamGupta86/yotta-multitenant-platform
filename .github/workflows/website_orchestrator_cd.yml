@@ -14,8 +14,37 @@ concurrency:
   group: local-platform-release
   cancel-in-progress: false
 jobs:
-  review-changes:
+  validate-chart:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: ubuntu-latest
+    # Lint, render and schema-check (kubeconform) the chart with this run's values before anything is reviewed or approved.
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ steps.pipeline.outputs.helm_version }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Validate the platform chart with the new orchestrator image
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          bash .github/scripts/validate-chart.sh "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" \
+            --set-string images.websiteOrchestrator="$CONTAINER_REGISTRY/$owner/$WEBSITE_ORCHESTRATOR_IMAGE:$IMAGE_TAG"
+  review-changes:
+    needs: validate-chart
+    if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
     # No approval: compares the deployed release with this change (helm diff), so the reviewer reads
     # the diff in this job's log or the run summary before approving the deploy job.
@@ -76,7 +105,8 @@ jobs:
       - name: Confirm the local Kind cluster and platform are ready
         run: |
           kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
-          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
+          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE" >/dev/null \
+            || { echo "::error::The platform release is not installed yet (Kafka, orchestrator). Run Platform Deployment first."; exit 1; }
       - name: Authenticate to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

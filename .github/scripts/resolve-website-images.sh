@@ -15,7 +15,6 @@ set -euo pipefail
 
 owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
 validate="$(dirname "$0")/validate-image-tag.sh"
-TAG_PATTERN='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-[0-9]{14}$'
 
 # ---- website-app
 if [[ -n "${IMAGE_TAG:-}" ]]; then
@@ -23,12 +22,7 @@ if [[ -n "${IMAGE_TAG:-}" ]]; then
   app_tag="$IMAGE_TAG"
   app_source="requested"
 else
-  # GHCR's registry API takes the GitHub token base64-encoded as a bearer token
-  token="$(printf '%s' "$GHCR_TOKEN" | base64 | tr -d '\n')"
-  app_tag="$(curl -fsSL -H "Authorization: Bearer $token" \
-      "https://$CONTAINER_REGISTRY/v2/$owner/$WEBSITE_APP_IMAGE/tags/list?n=1000" \
-    | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin).get("tags") or []))' \
-    | grep -E "$TAG_PATTERN" | sort -V | tail -n 1 || true)"
+  app_tag="$(bash "$(dirname "$0")/newest-image-tag.sh" "$WEBSITE_APP_IMAGE")"
   if [[ -z "$app_tag" ]]; then
     echo "::error::No published $WEBSITE_APP_IMAGE image with a version tag was found. Run Website App CI, or pass image_tag."
     exit 1

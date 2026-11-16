@@ -14,8 +14,11 @@ jobs:
   validate-chart:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
     runs-on: ubuntu-latest
+    # Lint, render and schema-check (kubeconform) the chart with this run's values before anything is reviewed or approved.
     permissions:
       contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -26,10 +29,16 @@ jobs:
       - uses: azure/setup-helm@v5
         with:
           version: ${{ steps.pipeline.outputs.helm_version }}
-      - name: Lint and render the provisioning chart
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Validate the provisioning chart
         run: |
-          helm lint helm/website-provisioning
-          helm template "$WEBSITE_PROVISIONING_IMAGE" helm/website-provisioning --namespace "$PLATFORM_NAMESPACE" > /tmp/website-provisioning.yaml
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          bash .github/scripts/validate-chart.sh "$WEBSITE_PROVISIONING_IMAGE" helm/website-provisioning --namespace "$PLATFORM_NAMESPACE" \
+            --set-string image.repository="$CONTAINER_REGISTRY/$owner/$WEBSITE_PROVISIONING_IMAGE" --set-string image.tag="$IMAGE_TAG"
   review-changes:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
@@ -92,7 +101,8 @@ jobs:
       - name: Confirm the local Kind cluster and platform are ready
         run: |
           kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
-          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
+          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE" >/dev/null \
+            || { echo "::error::The platform release is not installed yet (Kafka, orchestrator). Run Platform Deployment first."; exit 1; }
       - name: Authenticate to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

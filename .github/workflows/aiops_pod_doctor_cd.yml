@@ -14,8 +14,11 @@ jobs:
   validate-chart:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
     runs-on: ubuntu-latest
+    # Lint, render and schema-check (kubeconform) the chart with this run's values before anything is reviewed or approved.
     permissions:
       contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -26,10 +29,17 @@ jobs:
       - uses: azure/setup-helm@v5
         with:
           version: ${{ steps.pipeline.outputs.helm_version }}
-      - name: Lint and render the AIOps chart
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Validate the AIOps chart
         run: |
-          helm lint aiops-pod-doctor/helm
-          helm template "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm --namespace "$AIOPS_NAMESPACE" > /tmp/aiops-pod-doctor.yaml
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          bash .github/scripts/validate-chart.sh "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm --namespace "$AIOPS_NAMESPACE" \
+            --set-string image.repository="$CONTAINER_REGISTRY/$owner/$AIOPS_IMAGE" --set-string image.tag="$IMAGE_TAG" \
+            --set-string grok.existingSecret="$AIOPS_GROK_SECRET" --set-string email.existingSecret="$AIOPS_SMTP_SECRET"
   review-changes:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))

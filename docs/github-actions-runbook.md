@@ -33,6 +33,8 @@ yotta-multitenant-platform/
 │   │   ├── validate-image-tag.sh       CD guard: only MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS tags
 │   │   ├── resolve-website-images.sh   Website CD: requested or newest app image, running orchestrator image
 │   │   ├── helm-releases.sh            The Helm options of each CD release, used by review-changes and deploy
+│   │   ├── validate-chart.sh           CD validate-chart: helm lint + template + kubeconform
+│   │   ├── newest-image-tag.sh         Newest published version tag of a GHCR image
 │   │   └── update-orchestrator-token.sh Refreshes the orchestrator's GitHub token Secret in the cluster
 │   └── workflows/
 │       ├── reusable-service-ci.yml  Reusable CI: lint, tests, security scans, image build/scan/run, publish
@@ -176,6 +178,7 @@ Check the runner is online: `gh api repos/{owner}/{repo}/actions/runners --jq '.
 | `scripts/load-image-into-kind.sh` | CD jobs | pulls only the node's platform (arm64/amd64) of a multi-platform image and loads it into Kind |
 | `scripts/deploy-tenant.sh` | `website_app_cd.yml`, local setup | Helm install/upgrade of one tenant with HTTPS check, Helm test and automatic rollback |
 | `.github/scripts/resolve-website-images.sh` | `website_app_cd.yml` | picks the website image (requested or newest) and the orchestrator image (requested or running) |
+| `.github/scripts/validate-chart.sh` | all CD `validate-chart` jobs | lint, render and schema-check one chart with the run's values |
 | `.github/scripts/helm-releases.sh` | all CD jobs except Website App | the Helm options of each release, defined once for review-changes and deploy |
 | `scripts/helm-release.sh` | all CD jobs | `HELM_MODE=diff`: deployed-vs-new diff in the log, summary and artifact; `apply`: `helm upgrade --install` |
 | `scripts/setup-deployment-approvals.sh` | you, once | creates the approval environments |
@@ -249,7 +252,9 @@ Trivy, lints/builds/tests/scans the Fluentd image. `publish`: Fluentd image `flu
 
 Common to all, in this order:
 
-1. **validate-chart** (GitHub-hosted, most CDs): lints and renders the chart.
+1. **validate-chart** (GitHub-hosted, every CD): `helm lint`, `helm template` and `kubeconform -strict` on the chart
+   with this run's values (image tag; tenant and domain for Website App; our values file for monitoring). A failure
+   stops the run before review and approval.
 2. **review-changes** (the Mac, no approval): runs `helm diff upgrade` against the live cluster with exactly the
    values the deploy will use, and shows **deployed vs new** in colour in the job log (green = added, red = removed,
    yellow = each changed resource), as a collapsible diff in the run **Summary**, and as the `helm-diff-<run id>`
@@ -262,13 +267,23 @@ Each chart's Helm options are defined once (`.github/scripts/helm-releases.sh`, 
 `HELM_MODE=apply` in deploy, so the approved diff is exactly what gets applied. Website App CD also passes the images
 it chose in review-changes to the deploy job.
 
+**First install and upgrade use the same run.** Every release goes through `helm upgrade --install` with
+`--create-namespace`; the platform release uses `--reset-then-reuse-values` (keeps values set earlier, such as the
+notification webhook, but picks up new chart defaults). A release left in `pending-install`/`pending-upgrade` by a
+cancelled run is recovered first: rolled back to its last good revision, or removed if it was never deployed. The
+database Secrets are kept on uninstall (`helm.sh/resource-policy: keep`), so a reinstall reuses the password of the
+data already on the volume. On a fresh cluster run Platform Deployment first: it installs the add-ons, the platform
+(with the newest published orchestrator image) and monitoring; the other pipelines stop with a clear message until then.
+
 ### 6.1 Platform Deployment (`platform_cd.yml`)
 
 | Input | Required | Value |
 |---|---|---|
 | `image_tag` | yes | Fluentd tag from Platform CI |
 
-Needs: repository secret `ORCHESTRATOR_GITHUB_TOKEN`. Steps: validate tag → Kind ready → load Fluentd image →
+Needs: repository secret `ORCHESTRATOR_GITHUB_TOKEN`; on a fresh cluster also a published `website-orchestrator`
+image (Website Orchestrator CI). Steps: validate tag → Kind running → load Fluentd image (and, first install only,
+the newest orchestrator image) →
 cluster add-ons (Calico, ingress-nginx, cert-manager, metrics-server) → `platform` release (Kafka, orchestrator,
 Loki, Fluentd, issuer, dashboard) → `prometheus` release (Prometheus + Grafana + Alertmanager, each with an Ingress:
 `https://grafana|prometheus|alertmanager.myyotta.com:8443`).
@@ -411,3 +426,5 @@ gh run list --workflow website_app_cd.yml --limit 3
 | `PermissionError` reading files in a pod | image built from owner-only files | fixed in the Dockerfiles (`chmod -R a+rX /app`); rebuild |
 | `mkdir: /Users/runner: Permission denied` | `actions/setup-python` on a self-hosted Mac | CD uses the Mac's `python3` in a venv instead; do not add setup-python to CD jobs |
 | ShellCheck / ruff / hadolint failure in CI | lint finding | fix the reported line; CI fails on info-level findings too |
+| `another operation (install/upgrade/rollback) is in progress` | an earlier run was cancelled mid-upgrade | re-run the CD: it rolls the release back (or removes a never-deployed one) before upgrading |
+| `The platform release is not installed yet` | fresh cluster | run Platform Deployment first (needs a published orchestrator image) |

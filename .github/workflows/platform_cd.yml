@@ -17,8 +17,11 @@ jobs:
   validate-chart:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
     runs-on: ubuntu-latest
+    # Lint, render and schema-check (kubeconform) the chart with this run's values before anything is reviewed or approved.
     permissions:
       contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -29,10 +32,23 @@ jobs:
       - uses: azure/setup-helm@v5
         with:
           version: ${{ steps.pipeline.outputs.helm_version }}
-      - name: Lint and render platform chart
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Validate the platform chart
         run: |
-          helm lint helm/platform
-          helm template "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" > /tmp/platform.yaml
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          bash .github/scripts/validate-chart.sh "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" \
+            --set-string images.fluentd="$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG"
+      - name: Validate the monitoring chart with our values
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm pull prometheus-community/kube-prometheus-stack --version "$(tr -d '[:space:]' < helm/monitoring/chart-version.txt)" \
+            --untar --untardir /tmp/monitoring-chart
+          bash .github/scripts/validate-chart.sh "$MONITORING_RELEASE_NAME" /tmp/monitoring-chart/kube-prometheus-stack \
+            --namespace "$OBSERVABILITY_NAMESPACE" --values helm/monitoring/values.yaml
   review-changes:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
@@ -41,6 +57,9 @@ jobs:
     # the diff in this job's log or the run summary before approving the deploy job.
     permissions:
       contents: read
+      packages: read
+    outputs:
+      orchestrator_image: ${{ steps.orchestrator.outputs.image }}
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
       HELM_MODE: diff
@@ -54,14 +73,28 @@ jobs:
         run: bash .github/scripts/load-pipeline-config.sh
       - name: Validate the selected image tag
         run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
-      - name: Confirm the local Kind cluster is ready
-        run: |
-          kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
-          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
+      - name: Confirm the local Kind cluster is running
+        run: kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
       - name: Choose the Fluentd image
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           echo "FLUENTD_IMAGE=$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: "First install only: choose the orchestrator image (newest published)"
+        id: orchestrator
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
+            echo "Upgrade: the running orchestrator image is kept (Website Orchestrator Deployment changes it)."
+            exit 0
+          fi
+          tag="$(bash .github/scripts/newest-image-tag.sh "$WEBSITE_ORCHESTRATOR_IMAGE")"
+          [[ -n "$tag" ]] || { echo "::error::First install needs a published $WEBSITE_ORCHESTRATOR_IMAGE image: run Website Orchestrator CI first."; exit 1; }
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          image="$CONTAINER_REGISTRY/$owner/$WEBSITE_ORCHESTRATOR_IMAGE:$tag"
+          echo "First install of the platform: orchestrator image $image"
+          echo "ORCHESTRATOR_IMAGE=$image" >> "$GITHUB_ENV"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
       - name: "Changes: cluster add-ons (deployed vs new)"
         run: ./scripts/deploy-cluster-addons.sh
       - name: "Changes: platform release (deployed vs new)"
@@ -102,10 +135,8 @@ jobs:
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
-      - name: Confirm the local Kind cluster is ready
-        run: |
-          kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
-          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
+      - name: Confirm the local Kind cluster is running
+        run: kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
       - name: Authenticate to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -117,6 +148,13 @@ jobs:
           echo "FLUENTD_IMAGE=$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_ENV"
       - name: Load the Fluentd image into Kind (nodes' platform only)
         run: ./scripts/load-image-into-kind.sh "$FLUENTD_IMAGE" "$KIND_CLUSTER_NAME"
+      - name: "First install only: load the reviewed orchestrator image into Kind"
+        if: needs.review-changes.outputs.orchestrator_image != ''
+        env:
+          ORCHESTRATOR_IMAGE: ${{ needs.review-changes.outputs.orchestrator_image }}
+        run: |
+          echo "ORCHESTRATOR_IMAGE=$ORCHESTRATOR_IMAGE" >> "$GITHUB_ENV"
+          ./scripts/load-image-into-kind.sh "$ORCHESTRATOR_IMAGE" "$KIND_CLUSTER_NAME"
       - name: Deploy cluster add-ons through Helm
         run: ./scripts/deploy-cluster-addons.sh
       - name: Add and update monitoring Helm repository
