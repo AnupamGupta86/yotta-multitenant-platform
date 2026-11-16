@@ -160,4 +160,22 @@ Docker Compose is for local development and the Kafka integration test. It defau
 
 Deployment outcome notifications are written to the website-orchestrator logs by default, which Fluentd forwards to Loki. To also send them to a webhook, set `NOTIFICATION_WEBHOOK_URL` before running `scripts/setup-kind.sh`; the platform chart stores it in a Kubernetes Secret.
 
+## AIOps pod doctor (negative use case)
+
+`aiops-pod-doctor/` (its own folder: service, Helm chart, scripts) runs in the `aiops` namespace. Every 5 seconds it looks for a failing pod (CrashLoopBackOff, ImagePullBackOff, missing Secret, Unschedulable, Failed), takes **one** it has not analysed yet, sends its status, events and logs (secrets masked) to **Grok**, and prints the root cause and a workaround. Reports are also served at `/reports`. Details: [aiops-pod-doctor/README.md](aiops-pod-doctor/README.md).
+
+One-time setup: put the xAI API key in the `aiops-deployment` GitHub environment (the CD job reads it from there):
+
+```sh
+./scripts/setup-deployment-approvals.sh                # creates aiops-deployment with approval
+gh secret set GROK_API_KEY --env aiops-deployment      # paste the xAI key when asked
+gh variable set GROK_MODEL --env aiops-deployment --body grok-4   # optional
+```
+
+Deploy (after AIOps Pod Doctor CI published a tag); the run breaks a demo pod and adds Grok's report to its summary:
+
+```sh
+gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag> -f demo_failure=crash
+```
+
 See [deployment instructions](docs/deployment.md), [architecture](docs/architecture.md), [local runner setup](docs/local-runner.md), and [rollback notes](docs/rollback.md).

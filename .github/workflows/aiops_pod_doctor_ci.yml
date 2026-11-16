@@ -1,0 +1,81 @@
+name: AIOps Pod Doctor CI
+on:
+  push:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'aiops-pod-doctor/**'
+      - 'VERSION'
+      - 'scripts/build-version.sh'
+      - '.trivyignore'
+      - '.github/workflows/aiops_pod_doctor_ci.yml'
+      - '.github/workflows/aiops_pod_doctor_cd.yml'
+      - '.github/workflows/service_ci.yml'
+      - '.github/pipeline-config.env'
+      - '.github/scripts/**'
+  pull_request:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'aiops-pod-doctor/**'
+      - 'VERSION'
+      - 'scripts/build-version.sh'
+      - '.trivyignore'
+      - '.github/workflows/aiops_pod_doctor_ci.yml'
+      - '.github/workflows/aiops_pod_doctor_cd.yml'
+      - '.github/workflows/service_ci.yml'
+      - '.github/pipeline-config.env'
+      - '.github/scripts/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  chart-validation:
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ steps.pipeline.outputs.helm_version }}
+      - name: Lint and render the chart
+        run: |
+          helm lint aiops-pod-doctor/helm
+          mkdir -p /tmp/rendered-manifests
+          helm template "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm --namespace "$AIOPS_NAMESPACE" > /tmp/rendered-manifests/aiops-pod-doctor.yaml
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Validate rendered resources
+        run: kubeconform -strict -ignore-missing-schemas /tmp/rendered-manifests/aiops-pod-doctor.yaml
+      - name: Check the AIOps scripts
+        run: shellcheck aiops-pod-doctor/scripts/*.sh
+      - name: Scan rendered Kubernetes resources for security misconfigurations
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: /tmp/rendered-manifests
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+  # Same stages as the other services: lint, unit tests, security scans, image build,
+  # image scan, container health check, then publish to GHCR with a 1.0.0-<timestamp> tag.
+  service:
+    needs: chart-validation
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/service_ci.yml
+    with:
+      service: aiops-pod-doctor
+      image: aiops-pod-doctor
+      path: aiops-pod-doctor/service

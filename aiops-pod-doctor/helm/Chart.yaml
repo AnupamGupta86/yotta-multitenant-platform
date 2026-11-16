@@ -1,0 +1,6 @@
+apiVersion: v2
+name: aiops-pod-doctor
+description: Watches for failing pods every few seconds and asks Grok for the root cause and a workaround
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

@@ -1,0 +1,115 @@
+name: AIOps Pod Doctor Deployment
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Published aiops-pod-doctor image tag to deploy (see the CI run summary)
+        type: string
+        required: true
+      demo_failure:
+        description: Break a demo pod afterwards and wait for the doctor's report (negative test)
+        type: choice
+        default: crash
+        options: [crash, image-pull, missing-secret, none]
+permissions:
+  contents: read
+  packages: read
+jobs:
+  validate-chart:
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ steps.pipeline.outputs.helm_version }}
+      - name: Lint and render the AIOps chart
+        run: |
+          helm lint aiops-pod-doctor/helm
+          helm template "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm --namespace "$AIOPS_NAMESPACE" > /tmp/aiops-pod-doctor.yaml
+  deploy:
+    needs: validate-chart
+    if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # Manual approval: this job waits until a reviewer approves it.
+    # The 'aiops-deployment' environment also holds the GROK_API_KEY secret (and optionally a GROK_MODEL variable).
+    environment:
+      name: aiops-deployment
+    timeout-minutes: 20
+    concurrency:
+      group: local-platform-release
+      cancel-in-progress: false
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      DEMO_FAILURE: ${{ inputs.demo_failure }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Validate the selected image tag
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
+      - name: Confirm the local Kind cluster is running
+        run: kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login "$CONTAINER_REGISTRY" --username "$GHCR_USER" --password-stdin
+      - name: Choose the image
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$AIOPS_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: Load the image into Kind (nodes' platform only)
+        run: ./scripts/load-image-into-kind.sh "$IMAGE" "$KIND_CLUSTER_NAME"
+      - name: Store the Grok API key in the cluster
+        env:
+          # From Settings -> Environments -> aiops-deployment -> Environment secrets
+          GROK_API_KEY: ${{ secrets.GROK_API_KEY }}
+        run: |
+          if [[ -z "$GROK_API_KEY" ]]; then
+            echo "::error title=Missing GROK_API_KEY::Add the secret GROK_API_KEY to the 'aiops-deployment' environment: gh secret set GROK_API_KEY --env aiops-deployment"
+            exit 2
+          fi
+          kubectl create namespace "$AIOPS_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          # Key is read from stdin, so it never appears on a command line
+          printf '%s' "$GROK_API_KEY" | kubectl create secret generic "$AIOPS_GROK_SECRET" \
+            --namespace "$AIOPS_NAMESPACE" --from-file=api-key=/dev/stdin \
+            --dry-run=client -o yaml | kubectl apply -f -
+          # A short fingerprint (not the key) makes the pod restart when the key changes
+          echo "KEY_REVISION=$(printf '%s' "$GROK_API_KEY" | shasum -a 256 | cut -c1-12)" >> "$GITHUB_ENV"
+      - name: Install or upgrade the AIOps pod doctor through Helm
+        env:
+          GROK_MODEL: ${{ vars.GROK_MODEL || 'grok-4' }}
+        run: |
+          helm upgrade --install "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm \
+            --namespace "$AIOPS_NAMESPACE" \
+            --set-string image.repository="${IMAGE%:*}" \
+            --set-string image.tag="${IMAGE##*:}" \
+            --set-string grok.existingSecret="$AIOPS_GROK_SECRET" \
+            --set-string grok.model="$GROK_MODEL" \
+            --set-string grok.keyRevision="$KEY_REVISION" \
+            --wait --timeout "$SERVICE_HELM_TIMEOUT"
+          kubectl rollout status deployment/"$AIOPS_DEPLOYMENT" --namespace "$AIOPS_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
+          kubectl logs deployment/"$AIOPS_DEPLOYMENT" --namespace "$AIOPS_NAMESPACE" --tail=5
+      - name: 'Negative test: break a demo pod'
+        if: inputs.demo_failure != 'none'
+        run: |
+          pod="$(AIOPS_DEMO_NAMESPACE="$AIOPS_DEMO_NAMESPACE" ./aiops-pod-doctor/scripts/demo-failure.sh "$DEMO_FAILURE")"
+          echo "DEMO_POD=$pod" >> "$GITHUB_ENV"
+          echo "Created $AIOPS_DEMO_NAMESPACE/$pod ($DEMO_FAILURE)"
+      - name: 'Negative test: wait for the doctor to diagnose it'
+        if: inputs.demo_failure != 'none'
+        run: bash aiops-pod-doctor/scripts/wait-for-report.sh "$AIOPS_DEMO_NAMESPACE" "$DEMO_POD" 180
+      - name: Remove the demo pod
+        if: always() && inputs.demo_failure != 'none'
+        run: AIOPS_DEMO_NAMESPACE="$AIOPS_DEMO_NAMESPACE" ./aiops-pod-doctor/scripts/demo-failure.sh cleanup

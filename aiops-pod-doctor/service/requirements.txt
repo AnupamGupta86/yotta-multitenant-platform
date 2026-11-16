@@ -1,0 +1,2 @@
+# No third-party packages: the service uses only the Python standard library
+# (urllib for the Kubernetes and Grok APIs, http.server for health checks).

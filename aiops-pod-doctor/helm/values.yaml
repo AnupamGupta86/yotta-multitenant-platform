@@ -1,0 +1,28 @@
+name: aiops-pod-doctor
+image:
+  repository: yotta/aiops-pod-doctor
+  tag: local
+  pullPolicy: IfNotPresent
+replicas: 1
+port: 3000
+
+# How the doctor works
+pollIntervalSeconds: 5      # look for failing pods this often
+watchNamespaces: ""         # comma separated; empty = every namespace
+ignoreNamespaces: ""        # comma separated namespaces to skip
+logTailLines: 100           # log lines sent to Grok per container run
+
+grok:
+  model: grok-4
+  apiUrl: https://api.x.ai/v1/chat/completions
+  timeoutSeconds: 60
+  # Kubernetes Secret holding the API key under the key "api-key".
+  # The CD pipeline creates it from the GROK_API_KEY secret of the 'aiops-deployment' GitHub environment.
+  # Without it the doctor still runs and answers with built-in rules.
+  existingSecret: aiops-grok-api-key
+  # Changed by the CD pipeline when the key changes, so the pod restarts and reads the new key
+  keyRevision: ""
+
+resources:
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {cpu: 250m, memory: 128Mi}

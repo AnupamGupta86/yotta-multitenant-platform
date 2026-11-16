@@ -9,6 +9,11 @@ on:
       image:
         required: true
         type: string
+      path:
+        description: Folder with the Dockerfile, src and test (default services/<service>)
+        required: false
+        type: string
+        default: ''
     outputs:
       version:
         description: Unique timestamped image version published by this run
@@ -36,21 +41,21 @@ jobs:
         with:
           python-version: ${{ steps.pipeline.outputs.python_version }}
       - name: Install service and validation dependencies
-        working-directory: services/${{ inputs.service }}
+        working-directory: ${{ inputs.path || format('services/{0}', inputs.service) }}
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pytest ruff bandit pip-audit httpx httpx2
       - name: Python lint
-        working-directory: services/${{ inputs.service }}
+        working-directory: ${{ inputs.path || format('services/{0}', inputs.service) }}
         run: ruff check src test
       - name: Unit tests
-        working-directory: services/${{ inputs.service }}
+        working-directory: ${{ inputs.path || format('services/{0}', inputs.service) }}
         run: python -m pytest -q
       - name: Static application security scan
-        working-directory: services/${{ inputs.service }}
+        working-directory: ${{ inputs.path || format('services/{0}', inputs.service) }}
         run: bandit -q -r src
       - name: Python dependency vulnerability audit
-        working-directory: services/${{ inputs.service }}
+        working-directory: ${{ inputs.path || format('services/{0}', inputs.service) }}
         run: pip-audit -r requirements.txt --strict
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v3
@@ -60,12 +65,12 @@ jobs:
       - name: Dockerfile lint
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: services/${{ inputs.service }}/Dockerfile
+          dockerfile: ${{ inputs.path || format('services/{0}', inputs.service) }}/Dockerfile
       - uses: docker/setup-buildx-action@v4
       - name: Build container image
         uses: docker/build-push-action@v7
         with:
-          context: services/${{ inputs.service }}
+          context: ${{ inputs.path || format('services/{0}', inputs.service) }}
           load: true
           tags: local/${{ inputs.image }}:${{ github.sha }}
       - name: Container vulnerability scan
@@ -163,7 +168,7 @@ jobs:
       - name: Publish validated image
         uses: docker/build-push-action@v7
         with:
-          context: services/${{ inputs.service }}
+          context: ${{ inputs.path || format('services/{0}', inputs.service) }}
           platforms: ${{ steps.pipeline.outputs.image_build_platforms }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
