@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Deploy and verify one tenant Helm release, rolling back on failure; run with ./scripts/deploy-tenant.sh <tenant> <domain> <image> [orchestrator-image] [correlation-id].
+# HELM_MODE=diff (Review changes job) only shows what the tenant upgrade would change, then exits.
 set -euo pipefail
 
 DEFAULT_ORCHESTRATOR_IMAGE=yotta/website-orchestrator:local
@@ -58,6 +59,33 @@ if [[ ! "$orchestrator_image" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
   exit 2
 fi
 
+extra_helm_args=()
+if [[ "$SIMULATE_FAILURE" == "true" ]]; then
+  echo "SIMULATE_FAILURE=true: deploying a broken readiness probe to demonstrate automatic rollback" >&2
+  extra_helm_args=(--set probes.readiness.path=/simulated-failure)
+  HELM_TIMEOUT="$SIMULATED_FAILURE_TIMEOUT"
+fi
+# The tenant release, defined once: HELM_MODE=diff shows its changes (Review changes job), apply installs it.
+tenant_helm_args=(
+  --server-side=false
+  --namespace "$namespace"
+  --create-namespace
+  --take-ownership
+  --set tenant.name="$tenant"
+  --set image.repository="$repository"
+  --set image.tag="$tag"
+  --set ingress.host="$domain"
+  --set database.name="$tenant"
+  --set eventPublisher.enabled=true
+  --set eventPublisher.image="$orchestrator_image"
+  --set eventPublisher.correlationId="$correlation_id"
+  ${extra_helm_args[@]+"${extra_helm_args[@]}"}
+)
+helm_release="$(dirname "$0")/helm-release.sh"
+if [[ "${HELM_MODE:-apply}" == diff ]]; then
+  exec "$helm_release" "$release" "$TENANT_CHART" "${tenant_helm_args[@]}"
+fi
+
 if helm status "$release" --namespace "$namespace" >/dev/null 2>&1; then
   previous_revision="$(helm history "$release" --namespace "$namespace" --max 1 --output json | python3 -c 'import json,sys; print(json.load(sys.stdin)[-1]["revision"])')"
 fi
@@ -85,27 +113,8 @@ else
   kind load docker-image "$image" --name "$cluster_name"
   kind load docker-image "$orchestrator_image" --name "$cluster_name"
 fi
-extra_helm_args=()
-if [[ "$SIMULATE_FAILURE" == "true" ]]; then
-  echo "SIMULATE_FAILURE=true: deploying a broken readiness probe to demonstrate automatic rollback" >&2
-  extra_helm_args=(--set probes.readiness.path=/simulated-failure)
-  HELM_TIMEOUT="$SIMULATED_FAILURE_TIMEOUT"
-fi
 
-helm upgrade --install "$release" "$TENANT_CHART" \
-  --server-side=false \
-  --namespace "$namespace" \
-  --create-namespace \
-  --take-ownership \
-  --set tenant.name="$tenant" \
-  --set image.repository="$repository" \
-  --set image.tag="$tag" \
-  --set ingress.host="$domain" \
-  --set database.name="$tenant" \
-  --set eventPublisher.enabled=true \
-  --set eventPublisher.image="$orchestrator_image" \
-  --set eventPublisher.correlationId="$correlation_id" \
-  ${extra_helm_args[@]+"${extra_helm_args[@]}"} \
+"$helm_release" "$release" "$TENANT_CHART" "${tenant_helm_args[@]}" \
   "${HELM_ROLLBACK_OPTION[@]}" --wait --timeout "$HELM_TIMEOUT"
 
 for ((attempt = 1; attempt <= READINESS_ATTEMPTS; attempt++)); do

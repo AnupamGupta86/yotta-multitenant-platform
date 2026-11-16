@@ -30,9 +30,43 @@ jobs:
         run: |
           helm lint helm/website-provisioning
           helm template "$WEBSITE_PROVISIONING_IMAGE" helm/website-provisioning --namespace "$PLATFORM_NAMESPACE" > /tmp/website-provisioning.yaml
-  deploy:
+  review-changes:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # No approval: compares the deployed release with this change (helm diff), so the reviewer reads
+    # the diff in this job's log or the run summary before approving the deploy job.
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      HELM_MODE: diff
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Validate the selected image tag
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
+      - name: Confirm the local Kind cluster is running
+        run: kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+      - name: Choose the image
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$$WEBSITE_PROVISIONING_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: "Changes: website-provisioning release (deployed vs new)"
+        run: .github/scripts/helm-releases.sh provisioning
+      - uses: actions/upload-artifact@v6
+        with:
+          name: helm-diff-${{ github.run_id }}
+          path: ${{ runner.temp }}/helm-diff/
+          if-no-files-found: warn
+          retention-days: 14
+  deploy:
+    needs: review-changes
+    if: needs.review-changes.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
     # Manual approval: this job waits until a reviewer approves the deployment of the website provisioning service.
     # Reviewers are set on the 'website-provisioning-deployment' environment (scripts/setup-deployment-approvals.sh).
@@ -72,9 +106,5 @@ jobs:
         run: ./scripts/load-image-into-kind.sh "$IMAGE" "$KIND_CLUSTER_NAME"
       - name: Install or upgrade the Day 0 release through Helm
         run: |
-          helm upgrade --install "$WEBSITE_PROVISIONING_IMAGE" helm/website-provisioning \
-            --namespace "$PLATFORM_NAMESPACE" \
-            --set-string image.repository="${IMAGE%:*}" \
-            --set-string image.tag="${IMAGE##*:}" \
-            --wait --timeout "$SERVICE_HELM_TIMEOUT"
+          .github/scripts/helm-releases.sh provisioning
           kubectl rollout status deployment/"$WEBSITE_PROVISIONING_DEPLOYMENT" --namespace "$PLATFORM_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"

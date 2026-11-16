@@ -35,8 +35,56 @@ concurrency:
   group: local-platform-release
   cancel-in-progress: false
 jobs:
-  deploy:
+  review-changes:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # No approval: chooses the images and compares the tenant's deployed release with this change
+    # (helm diff), so the reviewer reads the diff before approving the deploy job.
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      image: ${{ steps.images.outputs.image }}
+      orchestrator_image: ${{ steps.images.outputs.orchestrator_image }}
+    env:
+      TENANT: ${{ inputs.tenant }}
+      DOMAIN: ${{ inputs.domain }}
+      IMAGE_TAG: ${{ inputs.image_tag || '' }}
+      ORCHESTRATOR_IMAGE_TAG: ${{ inputs.orchestrator_image_tag || '' }}
+      CORRELATION_ID: ${{ inputs.correlation_id || '' }}
+      SIMULATE_FAILURE: ${{ inputs.simulate_failure && 'true' || 'false' }}
+      HELM_MODE: diff
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Confirm local Kind cluster and platform services
+        run: |
+          kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+          helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE"
+      - name: Choose the images (requested tags, or newest website-app + running orchestrator)
+        id: images
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash .github/scripts/resolve-website-images.sh
+          # Hand the same images to the deploy job, so it applies exactly what was reviewed
+          grep -E '^(IMAGE|ORCHESTRATOR_IMAGE)=' "$GITHUB_ENV" | tail -n 2 \
+            | sed -e 's/^IMAGE=/image=/' -e 's/^ORCHESTRATOR_IMAGE=/orchestrator_image=/' >> "$GITHUB_OUTPUT"
+      - name: "Changes: tenant release (deployed vs new)"
+        run: ./scripts/deploy-tenant.sh "$TENANT" "$DOMAIN" "$IMAGE" "$ORCHESTRATOR_IMAGE" "$CORRELATION_ID"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: helm-diff-${{ github.run_id }}
+          path: ${{ runner.temp }}/helm-diff/
+          if-no-files-found: warn
+          retention-days: 14
+  deploy:
+    needs: review-changes
+    if: needs.review-changes.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
     # Manual approval: this job waits until a reviewer approves the deployment of a tenant's website.
     # Reviewers are set on the 'website-app-deployment' environment (scripts/setup-deployment-approvals.sh).
@@ -66,10 +114,14 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: printf '%s' "$GHCR_TOKEN" | docker login "$CONTAINER_REGISTRY" --username "$GHCR_USER" --password-stdin
-      - name: Choose the images (requested tags, or newest website-app + running orchestrator)
+      - name: Use the images shown in Review changes
         env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/resolve-website-images.sh
+          REVIEWED_IMAGE: ${{ needs.review-changes.outputs.image }}
+          REVIEWED_ORCHESTRATOR_IMAGE: ${{ needs.review-changes.outputs.orchestrator_image }}
+        run: |
+          [[ -n "$REVIEWED_IMAGE" && -n "$REVIEWED_ORCHESTRATOR_IMAGE" ]] || { echo "::error::Review changes did not pass the images on"; exit 1; }
+          { echo "IMAGE=$REVIEWED_IMAGE"; echo "ORCHESTRATOR_IMAGE=$REVIEWED_ORCHESTRATOR_IMAGE"; } >> "$GITHUB_ENV"
+          printf 'website-app: %s\nwebsite-orchestrator: %s\n' "$REVIEWED_IMAGE" "$REVIEWED_ORCHESTRATOR_IMAGE"
       # No actions/setup-python here: on a self-hosted Mac its Python 3.11+ packages install into
       # /Users/runner/hostedtoolcache (a path baked in for GitHub's own runners), which fails with
       # "mkdir: /Users/runner: Permission denied". The job only needs Python to publish a Kafka

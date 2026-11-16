@@ -32,6 +32,7 @@ yotta-multitenant-platform/
 │   │   ├── load-pipeline-config.sh     Loads pipeline-config.env into every job
 │   │   ├── validate-image-tag.sh       CD guard: only MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS tags
 │   │   ├── resolve-website-images.sh   Website CD: requested or newest app image, running orchestrator image
+│   │   ├── helm-releases.sh            The Helm options of each CD release, used by review-changes and deploy
 │   │   └── update-orchestrator-token.sh Refreshes the orchestrator's GitHub token Secret in the cluster
 │   └── workflows/
 │       ├── reusable-service-ci.yml  Reusable CI: lint, tests, security scans, image build/scan/run, publish
@@ -83,6 +84,7 @@ yotta-multitenant-platform/
 │   ├── load-image-into-kind.sh   Load only the node's platform of a multi-platform image into Kind
 │   ├── build-version.sh          Image tag 1.0.0-YYYYMMDDHHMMSS
 │   ├── helm-retry.sh             Retry wrapper for transient Helm/network errors
+│   ├── helm-release.sh           HELM_MODE=apply: helm upgrade --install; HELM_MODE=diff: coloured diff for review
 │   ├── load-test.py              CPU load generator for the HPA demo
 │   ├── collect-proof.sh          Proof-of-work evidence for all five assignment items
 │   └── setup-deployment-approvals.sh  Creates the GitHub approval environments
@@ -174,6 +176,8 @@ Check the runner is online: `gh api repos/{owner}/{repo}/actions/runners --jq '.
 | `scripts/load-image-into-kind.sh` | CD jobs | pulls only the node's platform (arm64/amd64) of a multi-platform image and loads it into Kind |
 | `scripts/deploy-tenant.sh` | `website_app_cd.yml`, local setup | Helm install/upgrade of one tenant with HTTPS check, Helm test and automatic rollback |
 | `.github/scripts/resolve-website-images.sh` | `website_app_cd.yml` | picks the website image (requested or newest) and the orchestrator image (requested or running) |
+| `.github/scripts/helm-releases.sh` | all CD jobs except Website App | the Helm options of each release, defined once for review-changes and deploy |
+| `scripts/helm-release.sh` | all CD jobs | `HELM_MODE=diff`: deployed-vs-new diff in the log, summary and artifact; `apply`: `helm upgrade --install` |
 | `scripts/setup-deployment-approvals.sh` | you, once | creates the approval environments |
 
 **Image tags.** Each publish pushes several tags; **deploy the version tag** shown on the run summary under
@@ -243,9 +247,20 @@ Trivy, lints/builds/tests/scans the Fluentd image. `publish`: Fluentd image `flu
 
 ## 6. CD pipelines
 
-Common to all: **(1)** a GitHub-hosted job lints/renders the chart (most CDs), **(2)** the deploy job on the Mac
-**waits for approval**, then validates the tag, checks the cluster, logs in to GHCR, loads the image into Kind and
-runs `helm upgrade --install … --wait`.
+Common to all, in this order:
+
+1. **validate-chart** (GitHub-hosted, most CDs): lints and renders the chart.
+2. **review-changes** (the Mac, no approval): runs `helm diff upgrade` against the live cluster with exactly the
+   values the deploy will use, and shows **deployed vs new** in colour in the job log (green = added, red = removed,
+   yellow = each changed resource), as a collapsible diff in the run **Summary**, and as the `helm-diff-<run id>`
+   artifact. A release that does not exist yet is shown as "NEW release". Nothing is changed in the cluster.
+3. **deploy** (the Mac) starts only after the plan is ready and **waits for approval**; then it validates the tag,
+   checks the cluster, logs in to GHCR, loads the image into Kind and runs `helm upgrade --install … --wait`.
+
+Each chart's Helm options are defined once (`.github/scripts/helm-releases.sh`, `scripts/deploy-cluster-addons.sh`,
+`scripts/deploy-tenant.sh`) and run through `scripts/helm-release.sh` with `HELM_MODE=diff` in review-changes and
+`HELM_MODE=apply` in deploy, so the approved diff is exactly what gets applied. Website App CD also passes the images
+it chose in review-changes to the deploy job.
 
 ### 6.1 Platform Deployment (`platform_cd.yml`)
 
@@ -329,8 +344,11 @@ gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag>    # dep
 
 ### Approving a deployment
 
-Run page → **Review deployments** → tick the environment → **Approve and deploy** (or **Reject**). Nothing runs on
-the Mac before that. From the terminal: `gh run view <run-id> --web`.
+1. Open the run and read **Review changes**: its log (coloured diff) or the run **Summary** (one diff per release).
+2. **Review deployments** → tick the environment → **Approve and deploy** (or **Reject**).
+
+Nothing is changed in the cluster before approval. The first run installs the helm-diff plugin on the runner Mac
+(`helm plugin install https://github.com/databus23/helm-diff`). From the terminal: `gh run view <run-id> --web`.
 
 ---
 

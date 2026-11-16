@@ -30,9 +30,46 @@ jobs:
         run: |
           helm lint aiops-pod-doctor/helm
           helm template "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm --namespace "$AIOPS_NAMESPACE" > /tmp/aiops-pod-doctor.yaml
-  deploy:
+  review-changes:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # No approval: compares the deployed release with this change (helm diff), so the reviewer reads
+    # the diff in this job's log or the run summary before approving the deploy job.
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      HELM_MODE: diff
+      GROK_MODEL: ${{ vars.GROK_MODEL || 'grok-4' }}
+      SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+      SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Validate the selected image tag
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
+      - name: Confirm the local Kind cluster is running
+        run: kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+      - name: Choose the image
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$$AIOPS_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: "Changes: aiops-pod-doctor release (deployed vs new)"
+        run: .github/scripts/helm-releases.sh aiops
+      - uses: actions/upload-artifact@v6
+        with:
+          name: helm-diff-${{ github.run_id }}
+          path: ${{ runner.temp }}/helm-diff/
+          if-no-files-found: warn
+          retention-days: 14
+  deploy:
+    needs: review-changes
+    if: needs.review-changes.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
     # Manual approval: this job waits at "Review deployments" until a reviewer of the 'aiops-deployment'
     # environment approves it (reviewers: scripts/setup-deployment-approvals.sh or Settings -> Environments).
@@ -108,16 +145,7 @@ jobs:
           SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
           SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
         run: |
-          helm upgrade --install "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm \
-            --namespace "$AIOPS_NAMESPACE" \
-            --set-string image.repository="${IMAGE%:*}" \
-            --set-string image.tag="${IMAGE##*:}" \
-            --set-string grok.existingSecret="$AIOPS_GROK_SECRET" \
-            --set-string grok.model="$GROK_MODEL" \
-            --set-string email.existingSecret="$AIOPS_SMTP_SECRET" \
-            --set-string email.smtpHost="$SMTP_HOST" \
-            --set-string email.smtpPort="$SMTP_PORT" \
-            --wait --timeout "$SERVICE_HELM_TIMEOUT"
+          .github/scripts/helm-releases.sh aiops
           kubectl get cronjob "$AIOPS_REPORT_CRONJOB" --namespace "$AIOPS_NAMESPACE"
       - name: Run the failure report once now (RCA + e-mail)
         run: bash aiops-pod-doctor/scripts/run-report-job.sh "aiops-report-${{ github.run_id }}-${{ github.run_attempt }}"

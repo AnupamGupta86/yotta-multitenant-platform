@@ -14,8 +14,43 @@ concurrency:
   group: local-platform-release
   cancel-in-progress: false
 jobs:
-  deploy:
+  review-changes:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # No approval: compares the deployed release with this change (helm diff), so the reviewer reads
+    # the diff in this job's log or the run summary before approving the deploy job.
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      HELM_MODE: diff
+      GHCR_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Validate the selected image tag
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
+      - name: Confirm the local Kind cluster is running
+        run: kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+      - name: Choose the image
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$$WEBSITE_ORCHESTRATOR_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: "Changes: platform release, website orchestrator (deployed vs new)"
+        run: .github/scripts/helm-releases.sh orchestrator
+      - uses: actions/upload-artifact@v6
+        with:
+          name: helm-diff-${{ github.run_id }}
+          path: ${{ runner.temp }}/helm-diff/
+          if-no-files-found: warn
+          retention-days: 14
+  deploy:
+    needs: review-changes
+    if: needs.review-changes.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
     # Manual approval: this job waits until a reviewer approves the deployment of the website orchestrator.
     # Reviewers are set on the 'website-orchestrator-deployment' environment (scripts/setup-deployment-approvals.sh).
@@ -65,9 +100,5 @@ jobs:
             echo "::error::Add the repository secret ORCHESTRATOR_GITHUB_TOKEN: a fine-grained token for this repository with 'Actions: Read and write' (see docs/deployment.md)."
             exit 2
           fi
-          helm upgrade --install "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" --reuse-values \
-            --set-string images.websiteOrchestrator="$IMAGE" \
-            --set-string orchestrator.repository="$GHCR_REPOSITORY" \
-            --set-string orchestrator.githubToken= \
-            --wait --timeout "$SERVICE_HELM_TIMEOUT"
+          .github/scripts/helm-releases.sh orchestrator
           bash .github/scripts/update-orchestrator-token.sh

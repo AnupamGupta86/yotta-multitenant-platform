@@ -160,14 +160,14 @@ for outcomes (optionally also to `NOTIFICATION_WEBHOOK_URL`). Events share a `co
 |---|---|---|
 | `website_app_ci`, `website_provisioning_ci`, `website_orchestrator_ci`, `aiops_pod_doctor_ci` | GitHub-hosted | chart lint + schema + security scan, then `reusable-service-ci.yml`: ruff, unit tests, Bandit, pip-audit, Gitleaks, hadolint, image build, Trivy, container health check, publish to GHCR |
 | `platform_ci` | GitHub-hosted | validates add-on, platform and monitoring charts; builds and publishes the Fluentd image |
-| `*_cd` | self-hosted Mac | validate the tag, wait for approval, load the image into Kind, `helm upgrade --install`, verify |
+| `*_cd` | self-hosted Mac | validate the tag, **review changes** (`helm diff`: deployed vs new, coloured in the log and in the run summary), wait for approval, load the image into Kind, `helm upgrade --install`, verify |
 
 Step-by-step reference for every pipeline (inputs, secrets, run order, troubleshooting): [docs/github-actions-runbook.md](docs/github-actions-runbook.md).
 
 - Pull requests run the same checks without publishing. Pushes to `master`, `feature`, `feature/**` publish.
 - Image tag: `MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS` (UTC build time), e.g. `1.0.0-20261116010802`;
   the version comes from `VERSION`. CD rejects any other format.
-- Every CD job waits for approval in its own GitHub environment (`platform-deployment`,
+- Every CD run first shows what will change (Review changes job), then waits for approval in its own GitHub environment (`platform-deployment`,
   `website-orchestrator-deployment`, `website-provisioning-deployment`, `website-app-deployment`, `aiops-deployment`).
 
 ## AIOps pod doctor (extra)
