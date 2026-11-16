@@ -64,7 +64,12 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/resolve-website-images.sh
+      # On a self-hosted Mac, setup-python's installer would write to /Users/runner/hostedtoolcache
+      # (the path on GitHub's own runners) and fail with "mkdir: /Users/runner: Permission denied".
+      # Point it at this runner's own tool cache instead; the Python it installs is reused next time.
       - uses: actions/setup-python@v6
+        env:
+          AGENT_TOOLSDIRECTORY: ${{ runner.tool_cache }}
         with:
           python-version: ${{ steps.pipeline.outputs.python_version }}
       - name: Install Kafka event publisher
