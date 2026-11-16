@@ -37,7 +37,7 @@ jobs:
       - name: Load shared pipeline defaults
         id: pipeline
         run: bash .github/scripts/load-pipeline-config.sh
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ steps.pipeline.outputs.python_version }}
       - name: Install service and validation dependencies
@@ -63,7 +63,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: 'false'
       - name: Dockerfile lint
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: ${{ inputs.path || format('services/{0}', inputs.service) }}/Dockerfile
       - uses: docker/setup-buildx-action@v4
