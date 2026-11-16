@@ -84,10 +84,13 @@ jobs:
       - name: Upgrade platform release through Helm
         env:
           GHCR_REPOSITORY: ${{ github.repository }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The orchestrator keeps this token to start Website App Deployment whenever a website is
+          # requested, so it must be a long-lived token. The job's own GITHUB_TOKEN is revoked as soon
+          # as this job ends, which would make every later request fail with HTTP 401.
+          ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN }}
         run: |
-          if [[ -z "$GHCR_TOKEN" ]]; then
-            echo 'Repository Actions secret GHCR_TOKEN is required.' >&2
+          if [[ -z "$ORCHESTRATOR_GITHUB_TOKEN" ]]; then
+            echo "::error::Add the repository secret ORCHESTRATOR_GITHUB_TOKEN: a fine-grained token for this repository with 'Actions: Read and write' (see docs/deployment.md)."
             exit 2
           fi
           helm upgrade --install "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" --create-namespace \

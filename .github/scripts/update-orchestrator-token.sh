@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Apply the Actions token as a Kubernetes Secret without putting it in Helm values or argv.
+# Store the orchestrator's GitHub token as a Kubernetes Secret, without putting it in Helm values
+# or on a command line. The orchestrator uses it to start Website App Deployment for each website
+# request, so it must be the long-lived ORCHESTRATOR_GITHUB_TOKEN secret, not the job's GITHUB_TOKEN
+# (which GitHub revokes when the job ends).
 set -euo pipefail
 
-: "${GHCR_TOKEN:?GHCR_TOKEN must be provided by the protected deployment job}"
+: "${ORCHESTRATOR_GITHUB_TOKEN:?ORCHESTRATOR_GITHUB_TOKEN must be provided by the deployment job}"
 : "${PLATFORM_NAMESPACE:?PLATFORM_NAMESPACE must be loaded from pipeline-config.env}"
 : "${ORCHESTRATOR_TOKEN_SECRET:?ORCHESTRATOR_TOKEN_SECRET must be loaded from pipeline-config.env}"
 
-printf '%s' "$GHCR_TOKEN" \
+printf '%s' "$ORCHESTRATOR_GITHUB_TOKEN" \
   | kubectl create secret generic "$ORCHESTRATOR_TOKEN_SECRET" \
       --namespace "$PLATFORM_NAMESPACE" \
       --from-file=token=/dev/stdin \

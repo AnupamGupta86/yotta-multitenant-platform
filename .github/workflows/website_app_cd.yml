@@ -64,16 +64,20 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/resolve-website-images.sh
-      # On a self-hosted Mac, setup-python's installer would write to /Users/runner/hostedtoolcache
-      # (the path on GitHub's own runners) and fail with "mkdir: /Users/runner: Permission denied".
-      # Point it at this runner's own tool cache instead; the Python it installs is reused next time.
-      - uses: actions/setup-python@v6
-        env:
-          AGENT_TOOLSDIRECTORY: ${{ runner.tool_cache }}
-        with:
-          python-version: ${{ steps.pipeline.outputs.python_version }}
-      - name: Install Kafka event publisher
-        run: python -m pip install --disable-pip-version-check -r services/website-orchestrator/requirements.txt
+      # No actions/setup-python here: on a self-hosted Mac its Python 3.11+ packages install into
+      # /Users/runner/hostedtoolcache (a path baked in for GitHub's own runners), which fails with
+      # "mkdir: /Users/runner: Permission denied". The job only needs Python to publish a Kafka
+      # event, so it uses the Mac's own python3 in a throwaway virtual environment.
+      - name: Install the Kafka event publisher (Mac's python3 + virtual environment)
+        run: |
+          command -v python3 >/dev/null || { echo "::error::python3 is not installed on the runner Mac"; exit 1; }
+          python3 -c 'import sys; assert sys.version_info >= (3, 9), sys.version' \
+            || { echo "::error::The runner Mac needs Python 3.9 or newer (found $(python3 --version))"; exit 1; }
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --quiet --disable-pip-version-check \
+            -r services/website-orchestrator/requirements.txt
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"   # later steps: python = this environment
+          "$RUNNER_TEMP/venv/bin/python" --version
       - name: Open Kafka port-forward for deployment events
         run: |
           kubectl port-forward --namespace "$PLATFORM_NAMESPACE" service/"$KAFKA_SERVICE_NAME" "${KAFKA_FORWARD_LOCAL_PORT}:${KAFKA_EXTERNAL_PORT}" > /tmp/kafka-port-forward.log 2>&1 &

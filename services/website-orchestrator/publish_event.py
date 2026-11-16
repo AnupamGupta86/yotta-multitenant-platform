@@ -1,7 +1,9 @@
 import argparse
 import json
 import os
-from datetime import UTC, datetime
+# timezone.utc rather than datetime.UTC: this script also runs with the Mac runner's own python3,
+# which may be older than 3.11
+from datetime import datetime, timezone
 from uuid import uuid4
 
 
@@ -21,7 +23,7 @@ def build_event(
         "tenant": tenant,
         "domain": domain,
         "image": image,
-        "occurred_at": occurred_at or datetime.now(UTC).isoformat(),
+        "occurred_at": occurred_at or datetime.now(timezone.utc).isoformat(),
     }
     if correlation_id:
         event["correlation_id"] = correlation_id
