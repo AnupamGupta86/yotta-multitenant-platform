@@ -165,7 +165,6 @@ for outcomes (optionally also to `NOTIFICATION_WEBHOOK_URL`). Events share a `co
   the version comes from `VERSION`. CD rejects any other format.
 - Every CD job waits for approval in its own GitHub environment (`platform-deployment`,
   `website-orchestrator-deployment`, `website-provisioning-deployment`, `website-app-deployment`, `aiops-deployment`).
-- Dependabot opens weekly grouped PRs for GitHub Actions, Python packages and Docker base images.
 
 ## AIOps pod doctor (extra)
 
