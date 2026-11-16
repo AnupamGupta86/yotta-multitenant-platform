@@ -38,8 +38,9 @@ jobs:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
-    # Manual approval: this job waits until a reviewer approves it.
-    # The 'aiops-deployment' environment also holds the GROK_API_KEY secret (and optionally a GROK_MODEL variable).
+    # Manual approval: this job waits at "Review deployments" until a reviewer of the 'aiops-deployment'
+    # environment approves it (reviewers: scripts/setup-deployment-approvals.sh or Settings -> Environments).
+    # The environment also holds the secrets GROK_API_KEY, SMTP_USERNAME, SMTP_PASSWORD, REPORT_EMAIL_TO.
     environment:
       name: aiops-deployment
     timeout-minutes: 20
