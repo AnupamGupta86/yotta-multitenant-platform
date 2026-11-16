@@ -1,4 +1,4 @@
-psycopg[binary]>=3.2,<4
+psycopg[binary]>=3.3.9,<4
 kafka-python-ng>=2.2.3,<3
-fastapi>=0.115,<1
-uvicorn[standard]>=0.34,<1
+fastapi>=0.162.5,<1
+uvicorn[standard]>=0.54.0,<1
