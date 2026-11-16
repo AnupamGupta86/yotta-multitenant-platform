@@ -5,10 +5,10 @@ __pycache__/
 .env.*
 *.log
 output/
-!gh-runner/setup-runner.sh
 
 # macOS folder metadata
 .DS_Store
 
 # Local GitHub Actions runner install (binaries, logs, registration): never commit
-gh-runner/*gh-runner/
+
+gh-runner/
