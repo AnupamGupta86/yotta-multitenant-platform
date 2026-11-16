@@ -67,6 +67,10 @@ jobs:
         with:
           dockerfile: ${{ inputs.path || format('services/{0}', inputs.service) }}/Dockerfile
       - uses: docker/setup-buildx-action@v4
+      # Regression guard: build from owner-only files (as on a developer Mac) so the image must
+      # make its files readable for the non-root app user itself; the health check below proves it
+      - name: Make the build context owner-only
+        run: chmod -R go-rwx "${{ inputs.path || format('services/{0}', inputs.service) }}"
       - name: Build container image
         uses: docker/build-push-action@v7
         with:
