@@ -1,4 +1,4 @@
-FROM fluent/fluentd:v1.20.1-debian-1.0
+FROM fluent/fluentd:v1.20.1-debian-1.1
 USER 0
 RUN apt-get update \
     && apt-get upgrade -y \
