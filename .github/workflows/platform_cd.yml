@@ -37,8 +37,8 @@ jobs:
     needs: validate-chart
     if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
-    # Configure required reviewers for this environment in repository settings.
-    # GitHub holds this job before any deployment step until approval is granted.
+    # Manual approval: this job waits until a reviewer approves the deployment of platform add-ons, the platform chart and monitoring.
+    # Reviewers are set on the 'platform-deployment' environment (scripts/setup-deployment-approvals.sh).
     environment:
       name: platform-deployment
     permissions:

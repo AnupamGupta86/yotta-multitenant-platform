@@ -85,7 +85,22 @@ Each pushed image is tagged `MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS` (UTC build time),
 
 Before running **Website Orchestrator Deployment**, add the repository Actions secret `ORCHESTRATOR_GITHUB_TOKEN`. Use a fine-grained token scoped to this repository with **Actions: Read and write** so the orchestrator can dispatch Website App Deployment. The workflow passes `github.repository` as `orchestrator.repository` and the secret as `orchestrator.githubToken` during the platform Helm upgrade.
 
-Before using Platform Deployment, create the GitHub Environment named `platform-deployment` under **Settings → Environments**, then configure **Required reviewers**. GitHub pauses the deployment job at that environment gate before running any step that changes the cluster. If no reviewers are configured for the environment, the job will not provide an effective approval gate.
+### Manual approval
+
+Every deployment pipeline waits for a person to approve it before it changes anything. Each one deploys through its own GitHub environment, so an approval covers exactly one kind of change and each has its own deployment history:
+
+| Pipeline | Environment |
+|---|---|
+| Platform Deployment (`platform_cd.yml`) | `platform-deployment` |
+| Website Orchestrator Deployment (`website_orchestrator_cd.yml`) | `website-orchestrator-deployment` |
+| Website Provisioning Deployment (`website_provisioning_cd.yml`) | `website-provisioning-deployment` |
+| Website App Deployment (`website_app_cd.yml`, one run per tenant) | `website-app-deployment` |
+
+Set them up once with `scripts/setup-deployment-approvals.sh` (needs the GitHub CLI, logged in with admin rights). It creates the four environments, makes you the required reviewer, and only allows deployments from `master`, `feature` and `feature/*`, the same branches the CD jobs accept. To add more reviewers: `scripts/setup-deployment-approvals.sh alice bob`.
+
+When a deployment starts, the run shows **Review deployments**: open it, tick the environment and choose **Approve and deploy** (or **Reject**). Nothing runs on the Mac until then.
+
+Website App Deployment is started automatically by the orchestrator when a website is requested, so every new tenant website also waits for approval. Without required reviewers on an environment, its job runs without stopping, so the setup script is what makes the gate real.
 
 ## Scaling demo
 

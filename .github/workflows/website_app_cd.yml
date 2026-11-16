@@ -33,7 +33,10 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
     runs-on: [self-hosted, macOS, yotta-local-k8s]
-    environment: platform-deployment
+    # Manual approval: this job waits until a reviewer approves the deployment of a tenant's website.
+    # Reviewers are set on the 'website-app-deployment' environment (scripts/setup-deployment-approvals.sh).
+    environment:
+      name: website-app-deployment
     timeout-minutes: 30
     env:
       TENANT: ${{ inputs.tenant }}
