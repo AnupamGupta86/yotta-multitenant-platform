@@ -1,0 +1,49 @@
+{{- if .Values.cronjob.enabled }}
+# Every minute: root-cause analysis of ONE newly failing pod (pod details, events, logs, Grok)
+# and an e-mail report. Each failure is e-mailed once; see the state ConfigMap in rbac.yaml.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Values.name }}-report
+  labels: {app.kubernetes.io/name: {{ .Values.name }}, app.kubernetes.io/component: report}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  concurrencyPolicy: Forbid          # never two reports at the same time
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 0                # a failed run is retried by the next schedule, not immediately
+      activeDeadlineSeconds: {{ .Values.cronjob.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: {{ .Values.name }}-report, app.kubernetes.io/component: report}
+        spec:
+          serviceAccountName: {{ .Values.name }}
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          securityContext:
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: report
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["python", "-m", "src.cronjob"]
+              env:
+                {{- include "aiops.env" . | nindent 16 }}
+                - {name: SMTP_HOST, value: {{ .Values.email.smtpHost | quote }}}
+                - {name: SMTP_PORT, value: {{ .Values.email.smtpPort | quote }}}
+                - {name: EMAIL_FROM, value: {{ .Values.email.from | quote }}}
+                - {name: STATE_CONFIGMAP, value: {{ .Values.cronjob.stateConfigMap | quote }}}
+                - name: POD_NAMESPACE
+                  valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+              volumeMounts:
+                {{- include "aiops.volumeMounts" . | nindent 16 }}
+              resources: {{- toYaml .Values.resources | nindent 16 }}
+              securityContext:
+                {{- include "aiops.containerSecurityContext" . | nindent 16 }}
+          volumes:
+            {{- include "aiops.volumes" . | nindent 12 }}
+{{- end }}

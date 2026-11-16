@@ -171,8 +171,8 @@ Step-by-step reference for every pipeline (inputs, secrets, run order, troublesh
 
 ## AIOps pod doctor (extra)
 
-Every 5 seconds it finds one failing pod, sends its status, events and logs (secrets masked) to Grok and
-reports the root cause and a workaround. See [aiops-pod-doctor/README.md](aiops-pod-doctor/README.md).
+A CronJob runs every minute: it finds one newly failing pod, sends its status, events and logs (secrets masked)
+to Grok and e-mails you the root cause and a workaround (one e-mail per failure). See [aiops-pod-doctor/README.md](aiops-pod-doctor/README.md).
 
 ## Local development
 

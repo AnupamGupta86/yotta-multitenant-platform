@@ -86,9 +86,9 @@ yotta-multitenant-platform/
 │   └── setup-deployment-approvals.sh  Creates the GitHub approval environments
 │
 ├── aiops-pod-doctor/             Extra: explains failing pods with Grok
-│   ├── service/                  Python service (detector, Kubernetes client, Grok client, 5 s loop) + tests
+│   ├── service/                  Python: detector, RCA, Grok client, e-mail, CronJob run + tests
 │   ├── helm/                     Deployment, Service, read-only ServiceAccount/ClusterRole
-│   └── scripts/                  demo-failure.sh (break a pod), wait-for-report.sh + report_to_markdown.py (CD)
+│   └── scripts/                  demo-failure.sh (break a demo pod), run-report-job.sh (start one report run now)
 │
 ├── kind/cluster.yaml             Kind cluster: nodes, HTTP 8081 / HTTPS 8443 on the Mac
 ├── database/init/                Local docker-compose database bootstrap
@@ -155,6 +155,7 @@ flowchart LR
 | 4 | Repository secret `ORCHESTRATOR_GITHUB_TOKEN` | Fine-grained PAT for this repo with **Actions: Read and write**: `gh secret set ORCHESTRATOR_GITHUB_TOKEN` |
 | 5 | Approval environments | `./scripts/setup-deployment-approvals.sh` (creates all five, you as reviewer, deploys only from `master`, `feature`, `feature/*`) |
 | 6 | Grok key (AIOps only) | `gh secret set GROK_API_KEY --env aiops-deployment`; optional `gh variable set GROK_MODEL --env aiops-deployment --body grok-4` |
+| 6b | E-mail reports (AIOps only) | `gh secret set SMTP_USERNAME`, `SMTP_PASSWORD`, `REPORT_EMAIL_TO` with `--env aiops-deployment`; optional variables `SMTP_HOST` (default `smtp.gmail.com`), `SMTP_PORT` (default `587`). See [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md#e-mail-setup-one-time) |
 | 7 | Local names | `127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com` in `/etc/hosts` |
 
 Check the runner is online: `gh api repos/{owner}/{repo}/actions/runners --jq '.runners[] | [.name,.status,(.labels|map(.name)|join(","))] | @tsv'`
@@ -313,15 +314,17 @@ gh workflow run website_app_cd.yml --ref master -f tenant=user1 -f domain=user1.
 | Input | Required | Value |
 |---|---|---|
 | `image_tag` | yes | tag from AIOps Pod Doctor CI |
-| `demo_failure` | no | `crash` (default), `image-pull`, `missing-secret`, `none` |
+| `demo_failure` | no | `none` (default), `crash`, `image-pull`, `missing-secret` |
 
-Needs: environment secret `GROK_API_KEY` on `aiops-deployment` (optional variable `GROK_MODEL`). Steps: tag and
-cluster checks → load image → store the key as Secret `aiops-grok-api-key` → Helm release in `aiops` → negative
-test: break a demo pod in `aiops-demo`, wait up to 3 min for the doctor's Grok report, add it to the run summary,
-delete the demo pod.
+Needs, on environment `aiops-deployment`: secrets `GROK_API_KEY`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+`REPORT_EMAIL_TO` (the run **fails** if any is missing); optional variables `GROK_MODEL`, `SMTP_HOST`, `SMTP_PORT`.
+Steps: tag and cluster checks → load image → store Secrets `aiops-grok-api-key` and `aiops-smtp` → Helm release
+in `aiops` (CronJob `aiops-pod-doctor-report`, every minute) → optional: break a demo pod in `aiops-demo` and wait
+until it fails → run one report now (RCA + e-mail; log in the run summary) → delete the demo pod.
 
 ```sh
-gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag> -f demo_failure=crash
+gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag>                      # deploy + one report run
+gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag> -f demo_failure=crash  # with a demo failure
 ```
 
 ### Approving a deployment

@@ -1,19 +1,29 @@
 # AIOps pod doctor
 
-A small service that runs inside the kind cluster and explains failing pods.
+Runs permanently inside the kind cluster as a **Kubernetes CronJob that starts every minute**
+(`aiops-pod-doctor-report`, namespace `aiops`). Each run finds pods that are not healthy, works out why
+with **Grok** (xAI), and **e-mails you the root-cause report**. It only reports: it never changes anything
+in the cluster.
 
-Every **5 seconds** it:
+## What one run does (every minute)
 
-1. lists the pods (all namespaces, or `WATCH_NAMESPACES`);
-2. picks **one** failing pod it has not analysed yet;
-3. collects the pod's status, events and logs (also from the previous crashed run);
-4. masks anything that looks like a password or token, then asks **Grok** (xAI API) for
-   *Root cause*, *Evidence*, *Workaround now* and *Permanent fix*;
-5. prints the report in its log and keeps the last 20 reports at `GET /reports`.
+1. Lists the pods (all namespaces, or `WATCH_NAMESPACES`) and finds the failing ones.
+2. Skips failures it has already reported, and picks **one** new failure (one report per run).
+3. Collects the root-cause data, like `kubectl describe pod` plus logs:
+   - status and failure reason, restart count, last exit code;
+   - node, owner (Deployment/Job…), image, resources, probes;
+   - Secrets/ConfigMaps/PVCs it depends on, environment variable **names** (never values);
+   - recent events; current logs **and** the logs of the previous crashed run.
+4. Masks anything that looks like a password or token, then asks Grok for **Root cause**,
+   **Evidence**, **Workaround now** (kubectl steps) and **Permanent fix**.
+   If Grok can't be reached, built-in rules give the cause and workaround instead.
+5. **E-mails** the report (plain text + HTML) and writes it to the job log.
+6. Remembers the failure in the ConfigMap `aiops-pod-doctor-state`, so you get **one e-mail per failure**,
+   not one per minute. When the pod recovers it is forgotten; if it fails again later, you get a new e-mail.
+   If the e-mail could not be sent, the failure is not marked and the next run tries again.
 
-Each failure is analysed once (per pod, container and reason), so a crash-looping pod does not
-call Grok every 5 seconds. A pod that recovers and fails again is analysed again.
-If Grok can't be reached (no key, network, API error) the report still comes, from built-in rules.
+A run takes a few seconds (up to about a minute when Grok is slow). If a run is still busy, the next
+minute is skipped (`concurrencyPolicy: Forbid`), so runs never overlap.
 
 ## What counts as failing
 
@@ -27,63 +37,101 @@ If Grok can't be reached (no key, network, API error) the report still comes, fr
 
 Pods that are starting, finished (`Succeeded`) or being deleted are ignored.
 
+## Secrets: stored in Kubernetes, read from files
+
+| Kubernetes Secret (namespace `aiops`) | Keys | Mounted at | Created by CD from GitHub environment `aiops-deployment` |
+|---|---|---|---|
+| `aiops-grok-api-key` | `api-key` | `/etc/aiops/grok/api-key` | secret `GROK_API_KEY` |
+| `aiops-smtp` | `username`, `password`, `to` | `/etc/aiops/smtp/` | secrets `SMTP_USERNAME`, `SMTP_PASSWORD`, `REPORT_EMAIL_TO` |
+
+Both are mounted as **read-only files** and the app reads the values from those files
+(`src/config.py`), instead of environment variables (which every process in the container can read
+and which end up in crash dumps). Both volumes are optional: without the Grok key the
+doctor uses built-in rules; without the SMTP Secret the report is only written to the job log.
+
+## E-mail setup (one time)
+
+Any SMTP account works. With **Gmail** (needs 2-Step Verification on the account):
+
+1. Create an **App password**: Google Account → Security → 2-Step Verification → *App passwords*
+   (name it "aiops"); Google shows a 16-character password once.
+2. Store the values in the GitHub environment (never in the repository):
+   ```bash
+   gh secret set SMTP_USERNAME   --env aiops-deployment --body "your.sender@gmail.com"
+   gh secret set SMTP_PASSWORD   --env aiops-deployment          # paste the app password when asked
+   gh secret set REPORT_EMAIL_TO --env aiops-deployment --body "you@example.com"   # comma separate several
+   ```
+3. Other providers: also set `gh variable set SMTP_HOST --env aiops-deployment --body smtp.office365.com`
+   and `SMTP_PORT` (`587` STARTTLS, default; `465` implicit TLS). Defaults: `smtp.gmail.com:587`.
+4. Run the AIOps CD workflow; it stores the values as the `aiops-smtp` Secret.
+
 ## Folder layout
 
 | Path | |
 |---|---|
 | `service/` | Python code, unit tests, Dockerfile |
-| `helm/` | Helm chart: Deployment, Service, read-only ServiceAccount/ClusterRole |
+| `helm/` | CronJob, read-only ServiceAccount/ClusterRole, Role for the state ConfigMap (optional live Deployment, off) |
 | `scripts/demo-failure.sh` | creates a broken demo pod (negative test) or cleans it up |
-| `scripts/wait-for-report.sh` | used by CD: waits for the doctor's report on the demo pod |
+| `scripts/run-report-job.sh` | starts one report run now (instead of waiting for the next minute) and shows its log |
 
-The workflows live in `.github/workflows/aiops_pod_doctor_ci.yml` and `aiops_pod_doctor_cd.yml`
-(GitHub only reads workflows from there).
+The workflows live in `.github/workflows/aiops_pod_doctor_ci.yml` and `aiops_pod_doctor_cd.yml`.
 
 ## Code (in `service/`)
 
 | File | Does |
 |---|---|
-| `src/main.py` | the 5-second loop, one report per poll, health and `/reports` HTTP endpoints |
-| `src/detector.py` | decides if a pod is failing and why (pure function, easy to test) |
-| `src/kube.py` | read-only Kubernetes API calls with the pod's service-account token |
+| `src/cronjob.py` | **the CronJob run**: pick one new failure, RCA, e-mail, remember it in the ConfigMap |
+| `src/main.py` | shared RCA logic (`PodDoctor`); also the image's default command, a polling loop with a health endpoint, used for the CI container check and the optional live mode |
+| `src/detector.py` | decides if a pod is failing and why |
+| `src/rca.py` | pod details for the RCA (`kubectl describe`-like, no secret values) |
 | `src/llm.py` | builds the prompt, masks secrets, calls Grok, built-in fallback advice |
-| `src/config.py` | settings from environment variables |
+| `src/report.py` | e-mail subject, plain-text and HTML body |
+| `src/emailer.py` | sends the e-mail over SMTP with TLS (STARTTLS on 587, implicit TLS on 465) |
+| `src/kube.py` | Kubernetes API calls with the pod's service-account token |
+| `src/config.py` | settings from environment variables and the mounted Secret files |
 
 No third-party packages: only the Python standard library.
 
-## Settings (environment variables, set by the Helm chart)
+## Settings
 
 | Variable | Default | |
 |---|---|---|
-| `POLL_INTERVAL_SECONDS` | `5` | how often to look |
-| `WATCH_NAMESPACES` | *(all)* | comma separated |
-| `IGNORE_NAMESPACES` | *(none)* | comma separated |
+| `WATCH_NAMESPACES` / `IGNORE_NAMESPACES` | *(all / none)* | comma separated |
 | `LOG_TAIL_LINES` | `100` | log lines per container run |
-| `GROK_API_KEY` | *(empty)* | from the `aiops-grok-api-key` Kubernetes Secret |
-| `GROK_MODEL` | `grok-4` | |
-| `GROK_API_URL` | `https://api.x.ai/v1/chat/completions` | |
+| `GROK_API_KEY_FILE` | `/etc/aiops/grok/api-key` | mounted Secret file (env `GROK_API_KEY` = local fallback) |
+| `GROK_MODEL` / `GROK_API_URL` | `grok-4` / `https://api.x.ai/v1/chat/completions` | |
+| `SMTP_SECRET_DIR` | `/etc/aiops/smtp` | mounted Secret files `username`, `password`, `to` |
+| `SMTP_HOST` / `SMTP_PORT` / `EMAIL_FROM` | `smtp.gmail.com` / `587` / the SMTP username | CronJob |
+| `STATE_CONFIGMAP` | `aiops-pod-doctor-state` | where the CronJob remembers reported failures |
+
+Helm values: `cronjob.schedule` (default `* * * * *`, every minute), `email.*`, `grok.*`;
+`liveDoctor.enabled` (default `false`) adds the old always-on 5-second variant.
 
 ## Pipelines
 
-* **CI** `aiops_pod_doctor_ci.yml`: chart lint/validation/security scan, then the shared
-  `service_ci.yml` (ruff, unit tests, bandit, pip-audit, secret scan, hadolint, image build,
-  Trivy, container health check, publish `ghcr.io/<owner>/aiops-pod-doctor:1.0.0-<timestamp>`).
-* **CD** `aiops_pod_doctor_cd.yml` (manual, needs approval on the `aiops-deployment` environment):
-  stores `GROK_API_KEY` from that environment as a Kubernetes Secret, deploys with Helm into the
-  `aiops` namespace, then (negative test) breaks a demo pod and waits for the doctor's report,
-  which it adds to the run summary.
+* **CI** `aiops_pod_doctor_ci.yml`: chart lint/validation/security scan and ShellCheck, then the shared
+  `service_ci.yml` (ruff, unit tests, Bandit, pip-audit, secret scan, hadolint, image build, Trivy,
+  container health check, publish `ghcr.io/<owner>/aiops-pod-doctor:1.0.0-<timestamp>`).
+* **CD** `aiops_pod_doctor_cd.yml` (manual, approval on `aiops-deployment`): stores the Grok key and the
+  e-mail login as Kubernetes Secrets (**fails if either is missing**), deploys the chart into `aiops`, and
+  runs one report immediately (its log goes to the run summary). Optional negative test
+  (`demo_failure=crash|image-pull|missing-secret`, default `none`): break a demo pod first, so that run
+  has a failure to e-mail.
 
 ## Try it
 
 ```bash
-# Run the deployment (after CI published a tag)
+# Deploy (after CI published a tag)
 gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag> -f demo_failure=crash
 
-# Or break a pod yourself and watch
-aiops-pod-doctor/scripts/demo-failure.sh crash            # or image-pull / missing-secret
-kubectl logs -n aiops deploy/aiops-pod-doctor -f
-kubectl get --raw /api/v1/namespaces/aiops/services/aiops-pod-doctor:http/proxy/reports
-aiops-pod-doctor/scripts/demo-failure.sh cleanup
+# Break one of your own apps (old pods keep serving), get the e-mail within a minute
+kubectl set image deployment/user1-app website-app=ghcr.io/anupamgupta86/website-app:does-not-exist -n user1
+kubectl get jobs -n aiops -w                              # a run every minute
+kubectl logs -n aiops job/<latest job>                    # the report it e-mailed
+kubectl get configmap aiops-pod-doctor-state -n aiops -o yaml   # what was already e-mailed
+kubectl rollout undo deployment/user1-app -n user1        # fix it yourself (the doctor only reports)
+
+aiops-pod-doctor/scripts/run-report-job.sh                # start a run now instead of waiting
 
 # Unit tests
 cd aiops-pod-doctor/service && python -m pytest -q

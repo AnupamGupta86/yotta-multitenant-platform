@@ -14,7 +14,7 @@ MAX_LOG_CHARS = 6000
 SYSTEM_PROMPT = (
     "You are a senior Kubernetes site reliability engineer. "
     "You get the status, events and logs of one failing pod. Answer in plain text with exactly these sections:\n"
-    "Root cause: one or two sentences.\n"
+    "Root cause: one or two sentences, naming the failing component and why.\n"
     "Evidence: the log or event lines that prove it.\n"
     "Workaround now: numbered kubectl commands or steps to get the pod running again today.\n"
     "Permanent fix: what to change in the image, manifest or Helm values.\n"
@@ -39,7 +39,7 @@ def _tail(text: str, limit: int = MAX_LOG_CHARS) -> str:
     return text if len(text) <= limit else "...(truncated)...\n" + text[-limit:]
 
 
-def build_prompt(failure: PodFailure, logs: str, previous_logs: str, events: list[dict]) -> str:
+def build_prompt(failure: PodFailure, logs: str, previous_logs: str, events: list[dict], pod_details: str = "") -> str:
     event_lines = [
         f"{event.get('type', '')} {event.get('reason', '')} (x{event.get('count', 1)}): {event.get('message', '')}"
         for event in events[-15:]
@@ -51,6 +51,9 @@ def build_prompt(failure: PodFailure, logs: str, previous_logs: str, events: lis
         f"Failure reason: {failure.reason}",
         f"Status message: {failure.message or '-'}",
         f"Restart count: {failure.restart_count}",
+        "",
+        "Pod details:",
+        pod_details or "(not available)",
         "",
         "Events (oldest first):",
         "\n".join(event_lines) or "(none)",

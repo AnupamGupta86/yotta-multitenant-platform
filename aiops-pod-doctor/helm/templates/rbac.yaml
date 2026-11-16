@@ -28,3 +28,36 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.name }}
     namespace: {{ .Release.Namespace }}
+{{- if .Values.cronjob.enabled }}
+---
+# The CronJob remembers which failures it already e-mailed in ONE ConfigMap of its own namespace.
+# Kubernetes cannot limit "create" to a name, so create is allowed in this namespace only;
+# reading and updating are limited to that ConfigMap.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.name }}-state
+  labels: {app.kubernetes.io/name: {{ .Values.name }}}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ .Values.cronjob.stateConfigMap }}]
+    verbs: [get, update]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.name }}-state
+  labels: {app.kubernetes.io/name: {{ .Values.name }}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.name }}-state
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.name }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

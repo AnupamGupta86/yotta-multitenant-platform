@@ -7,9 +7,9 @@ on:
         type: string
         required: true
       demo_failure:
-        description: Break a demo pod afterwards and wait for the doctor's report (negative test)
+        description: 'Optional negative test: break a demo pod first, so the report run has a failure to e-mail'
         type: choice
-        default: crash
+        default: none
         options: [crash, image-pull, missing-secret, none]
 permissions:
   contents: read
@@ -87,9 +87,32 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
           # A short fingerprint (not the key) makes the pod restart when the key changes
           echo "KEY_REVISION=$(printf '%s' "$GROK_API_KEY" | shasum -a 256 | cut -c1-12)" >> "$GITHUB_ENV"
+      - name: Store the e-mail login in the cluster
+        env:
+          # From Settings -> Environments -> aiops-deployment -> Environment secrets
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+        run: |
+          if [[ -z "$SMTP_USERNAME" || -z "$SMTP_PASSWORD" || -z "$REPORT_EMAIL_TO" ]]; then
+            echo "::error title=E-mail not configured::Add SMTP_USERNAME, SMTP_PASSWORD and REPORT_EMAIL_TO to the 'aiops-deployment' environment (gh secret set <NAME> --env aiops-deployment)"
+            exit 2
+          fi
+          # Values go through files readable only by this job, never through a command line
+          secret_dir="$(mktemp -d "$RUNNER_TEMP/smtp.XXXXXX")"
+          trap 'rm -rf "$secret_dir"' EXIT
+          (umask 077
+           printf '%s' "$SMTP_USERNAME" > "$secret_dir/username"
+           printf '%s' "$SMTP_PASSWORD" > "$secret_dir/password"
+           printf '%s' "$REPORT_EMAIL_TO" > "$secret_dir/to")
+          kubectl create secret generic "$AIOPS_SMTP_SECRET" --namespace "$AIOPS_NAMESPACE" \
+            --from-file=username="$secret_dir/username" --from-file=password="$secret_dir/password" \
+            --from-file=to="$secret_dir/to" --dry-run=client -o yaml | kubectl apply -f -
       - name: Install or upgrade the AIOps pod doctor through Helm
         env:
           GROK_MODEL: ${{ vars.GROK_MODEL || 'grok-4' }}
+          SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+          SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
         run: |
           helm upgrade --install "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm \
             --namespace "$AIOPS_NAMESPACE" \
@@ -98,18 +121,30 @@ jobs:
             --set-string grok.existingSecret="$AIOPS_GROK_SECRET" \
             --set-string grok.model="$GROK_MODEL" \
             --set-string grok.keyRevision="$KEY_REVISION" \
+            --set-string email.existingSecret="$AIOPS_SMTP_SECRET" \
+            --set-string email.smtpHost="$SMTP_HOST" \
+            --set-string email.smtpPort="$SMTP_PORT" \
             --wait --timeout "$SERVICE_HELM_TIMEOUT"
-          kubectl rollout status deployment/"$AIOPS_DEPLOYMENT" --namespace "$AIOPS_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
-          kubectl logs deployment/"$AIOPS_DEPLOYMENT" --namespace "$AIOPS_NAMESPACE" --tail=5
+          kubectl get cronjob "$AIOPS_REPORT_CRONJOB" --namespace "$AIOPS_NAMESPACE"
       - name: 'Negative test: break a demo pod'
         if: inputs.demo_failure != 'none'
         run: |
           pod="$(AIOPS_DEMO_NAMESPACE="$AIOPS_DEMO_NAMESPACE" ./aiops-pod-doctor/scripts/demo-failure.sh "$DEMO_FAILURE")"
           echo "DEMO_POD=$pod" >> "$GITHUB_ENV"
           echo "Created $AIOPS_DEMO_NAMESPACE/$pod ($DEMO_FAILURE)"
-      - name: 'Negative test: wait for the doctor to diagnose it'
+      - name: 'Negative test: wait until the demo pod is failing'
         if: inputs.demo_failure != 'none'
-        run: bash aiops-pod-doctor/scripts/wait-for-report.sh "$AIOPS_DEMO_NAMESPACE" "$DEMO_POD" 180
+        run: |
+          for _ in {1..24}; do
+            reason="$(kubectl get pod "$DEMO_POD" -n "$AIOPS_DEMO_NAMESPACE" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)"
+            echo "demo pod state: ${reason:-starting}"
+            case "$reason" in CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError) exit 0 ;; esac
+            sleep 5
+          done
+          echo "::error::Demo pod $DEMO_POD did not reach a failing state in 2 minutes"
+          exit 1
+      - name: Run the failure report once now (RCA + e-mail)
+        run: bash aiops-pod-doctor/scripts/run-report-job.sh "aiops-report-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Remove the demo pod
         if: always() && inputs.demo_failure != 'none'
         run: AIOPS_DEMO_NAMESPACE="$AIOPS_DEMO_NAMESPACE" ./aiops-pod-doctor/scripts/demo-failure.sh cleanup

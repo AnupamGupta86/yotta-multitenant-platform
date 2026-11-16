@@ -25,7 +25,8 @@ from typing import Protocol
 from src.config import Settings
 from src.detector import PodFailure, find_failure
 from src.kube import KubeClient, KubeError
-from src.llm import GrokClient, GrokError, build_prompt, fallback_analysis
+from src.llm import GrokClient, GrokError, build_prompt, fallback_analysis, redact
+from src.rca import describe_pod
 
 log = logging.getLogger("aiops-pod-doctor")
 
@@ -48,28 +49,32 @@ class PodDoctor:
         return self.kube.list_pods()
 
     def current_failures(self) -> list[PodFailure]:
-        failures = []
+        return [failure for failure, _ in self.failing_pods()]
+
+    def failing_pods(self) -> list[tuple[PodFailure, dict]]:
+        """Every failing pod (with its full pod object), sorted by namespace and name."""
+        found = []
         for pod in self._pods():
             failure = find_failure(pod)
             if failure and failure.namespace not in self.settings.ignore_namespaces:
-                failures.append(failure)
-        return sorted(failures, key=lambda failure: (failure.namespace, failure.pod))
+                found.append((failure, pod))
+        return sorted(found, key=lambda item: (item[0].namespace, item[0].pod))
 
     def poll_once(self) -> dict | None:
         """Analyse at most one new failing pod. Returns its report, or None."""
-        failures = self.current_failures()
+        failing = self.failing_pods()
         # Forget pods that are healthy again (or gone), so a new failure is analysed again
-        self.analysed &= {failure.key for failure in failures}
-        new = [failure for failure in failures if failure.key not in self.analysed]
+        self.analysed &= {failure.key for failure, _ in failing}
+        new = [(failure, pod) for failure, pod in failing if failure.key not in self.analysed]
         if not new:
             return None
-        failure = new[0]
-        report = self.diagnose(failure)
+        failure, pod = new[0]
+        report = self.diagnose(failure, pod)
         self.analysed.add(failure.key)
         self.reports.append(report)
         return report
 
-    def diagnose(self, failure: PodFailure) -> dict:
+    def diagnose(self, failure: PodFailure, pod: dict | None = None) -> dict:
         tail = self.settings.log_tail_lines
         logs = self.kube.pod_logs(failure.namespace, failure.pod, failure.container, tail)
         previous_logs = ""
@@ -81,7 +86,8 @@ class PodDoctor:
             log.warning("Could not read events for %s/%s: %s", failure.namespace, failure.pod, error)
             events = []
 
-        prompt = build_prompt(failure, logs, previous_logs, events)
+        pod_details = describe_pod(pod, failure.container) if pod else ""
+        prompt = build_prompt(failure, logs, previous_logs, events, pod_details)
         try:
             analysis, source = self.analyst.analyse(prompt), "grok"
         except GrokError as error:
@@ -98,6 +104,12 @@ class PodDoctor:
             "restart_count": failure.restart_count,
             "analysed_by": source,
             "analysis": analysis,
+            "pod_details": pod_details,
+            "events": "\n".join(
+                f"{event.get('type', '')} {event.get('reason', '')} (x{event.get('count', 1)}): {event.get('message', '')}"
+                for event in events[-10:]
+            ),
+            "log_excerpt": redact("\n".join((previous_logs or logs).splitlines()[-30:])),
         }
 
 

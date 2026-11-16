@@ -1,3 +1,4 @@
+{{- if .Values.liveDoctor.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,15 +26,9 @@ spec:
           env:
             - {name: PORT, value: {{ .Values.port | quote }}}
             - {name: POLL_INTERVAL_SECONDS, value: {{ .Values.pollIntervalSeconds | quote }}}
-            - {name: WATCH_NAMESPACES, value: {{ .Values.watchNamespaces | quote }}}
-            - {name: IGNORE_NAMESPACES, value: {{ .Values.ignoreNamespaces | quote }}}
-            - {name: LOG_TAIL_LINES, value: {{ .Values.logTailLines | quote }}}
-            - {name: GROK_MODEL, value: {{ .Values.grok.model | quote }}}
-            - {name: GROK_API_URL, value: {{ .Values.grok.apiUrl | quote }}}
-            - {name: GROK_TIMEOUT_SECONDS, value: {{ .Values.grok.timeoutSeconds | quote }}}
-            - name: GROK_API_KEY
-              valueFrom:
-                secretKeyRef: {name: {{ .Values.grok.existingSecret }}, key: api-key, optional: true}
+            {{- include "aiops.env" . | nindent 12 }}
+          volumeMounts:
+            {{- include "aiops.volumeMounts" . | nindent 12 }}
           ports: [{name: http, containerPort: {{ .Values.port }}}]
           livenessProbe:
             httpGet: {path: /health/live, port: http}
@@ -45,12 +40,9 @@ spec:
             periodSeconds: 5
           resources: {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 10001
-            runAsGroup: 10001
-            capabilities: {drop: [ALL]}
+            {{- include "aiops.containerSecurityContext" . | nindent 12 }}
+      volumes:
+        {{- include "aiops.volumes" . | nindent 8 }}
 ---
 apiVersion: v1
 kind: Service
@@ -60,3 +52,4 @@ metadata:
 spec:
   selector: {app.kubernetes.io/name: {{ .Values.name }}}
   ports: [{name: http, port: 80, targetPort: http}]
+{{- end }}

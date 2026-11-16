@@ -3,6 +3,10 @@ image:
   repository: yotta/aiops-pod-doctor
   tag: local
   pullPolicy: IfNotPresent
+# Optional always-on variant that checks every pollIntervalSeconds and serves /reports.
+# Off by default: the CronJob above is the doctor.
+liveDoctor:
+  enabled: false
 replicas: 1
 port: 3000
 
@@ -16,12 +20,34 @@ grok:
   model: grok-4
   apiUrl: https://api.x.ai/v1/chat/completions
   timeoutSeconds: 60
-  # Kubernetes Secret holding the API key under the key "api-key".
-  # The CD pipeline creates it from the GROK_API_KEY secret of the 'aiops-deployment' GitHub environment.
+  # Kubernetes Secret holding the API key under the key "api-key". It is mounted as a file at
+  # /etc/aiops/grok/api-key and the app reads the key from there. The CD pipeline creates the Secret
+  # from the GROK_API_KEY secret of the 'aiops-deployment' GitHub environment.
   # Without it the doctor still runs and answers with built-in rules.
   existingSecret: aiops-grok-api-key
   # Changed by the CD pipeline when the key changes, so the pod restarts and reads the new key
   keyRevision: ""
+
+# E-mail reports (sent by the CronJob)
+email:
+  smtpHost: smtp.gmail.com
+  smtpPort: 587             # 587 = STARTTLS, 465 = implicit TLS
+  from: ""                  # empty = the SMTP username
+  # Kubernetes Secret with keys "username", "password" and "to" (comma separated recipients),
+  # mounted at /etc/aiops/smtp. Created by the CD pipeline from the 'aiops-deployment' environment
+  # secrets SMTP_USERNAME, SMTP_PASSWORD and REPORT_EMAIL_TO. Without it reports are only logged.
+  existingSecret: aiops-smtp
+
+# The doctor: a CronJob that runs every minute, does the RCA for ONE newly failing pod and e-mails the report
+cronjob:
+  enabled: true
+  schedule: "* * * * *"
+  # Remembers which failures were already e-mailed (one e-mail per failure, not one per run)
+  stateConfigMap: aiops-pod-doctor-state
+  # concurrencyPolicy Forbid: if a run is still busy (e.g. waiting for Grok), the next minute is skipped
+  activeDeadlineSeconds: 240
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
 
 resources:
   requests: {cpu: 50m, memory: 64Mi}
