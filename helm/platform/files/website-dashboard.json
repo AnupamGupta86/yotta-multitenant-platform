@@ -231,13 +231,13 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"user[1-3]\"}",
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas and on(namespace) kube_pod_container_info{container=\"website-app\"}",
           "legendFormat": "current {{namespace}}",
           "format": "time_series"
         },
         {
           "refId": "B",
-          "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"user[1-3]\"}",
+          "expr": "kube_horizontalpodautoscaler_status_desired_replicas and on(namespace) kube_pod_container_info{container=\"website-app\"}",
           "legendFormat": "desired {{namespace}}",
           "format": "time_series"
         }
@@ -274,7 +274,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (namespace) (rate(container_cpu_usage_seconds_total{namespace=~\"user[1-3]\",container=\"website-app\"}[5m]))",
+          "expr": "sum by (namespace) (rate(container_cpu_usage_seconds_total{container=\"website-app\"}[5m]))",
           "legendFormat": "{{namespace}}",
           "format": "time_series"
         }
@@ -311,7 +311,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (namespace) (container_memory_working_set_bytes{namespace=~\"user[1-3]\",container=\"website-app\"})",
+          "expr": "sum by (namespace) (container_memory_working_set_bytes{container=\"website-app\"})",
           "legendFormat": "{{namespace}}",
           "format": "time_series"
         }
@@ -348,7 +348,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (namespace) (increase(kube_pod_container_status_restarts_total{namespace=~\"user[1-3]\",container=\"website-app\"}[15m]))",
+          "expr": "sum by (namespace) (increase(kube_pod_container_status_restarts_total{container=\"website-app\"}[15m]))",
           "legendFormat": "{{namespace}}",
           "format": "time_series"
         }
@@ -385,7 +385,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (namespace) (kube_statefulset_status_replicas_ready{namespace=~\"user[1-3]\",statefulset=~\"user[1-3]-postgres\"})",
+          "expr": "sum by (namespace) (kube_statefulset_status_replicas_ready{statefulset=~\".+-postgres\", namespace!=\"platform\"})",
           "legendFormat": "{{namespace}}",
           "format": "time_series"
         }

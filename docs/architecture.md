@@ -29,7 +29,7 @@ sequenceDiagram
 
 The Helm `platform` release installs Kafka, the Python deployment orchestrator, Loki, Fluentd, the local ClusterIssuer, and the Grafana dashboard. The `website-provisioning` API and its private PostgreSQL database are a separate Helm release installed by the Day 0 GitHub Actions workflow.
 
-Each website has a separate namespace and Helm release. Its release contains the website API, private PostgreSQL StatefulSet with a persistent volume claim, generated database Secret, Ingress, ServiceMonitor, HPA, PDB, quota, LimitRange, and NetworkPolicies. Tenants do not share databases. The Provisioning API also has its own PostgreSQL database and persistent volume.
+Each website has a separate namespace and Helm release. Its release contains the Flask website (served by gunicorn), private PostgreSQL StatefulSet with a persistent volume claim, generated database Secret, Ingress, ServiceMonitor, HPA, PDB, quota, LimitRange, and NetworkPolicies. Tenants do not share databases. The Provisioning API also has its own PostgreSQL database and persistent volume.
 
 Helm owns Kubernetes resources. `kubectl` is used for read-only checks, logs, port forwarding, and readiness inspection. Tenant deployments, platform updates, and the Day 0 API install all use Helm.
 

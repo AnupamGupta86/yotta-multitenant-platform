@@ -1,18 +1,50 @@
-# Deployment rollback
+# Rollback
 
-Helm upgrade uses `--rollback-on-failure --wait` when the installed Helm supports that option, and falls back to `--atomic --wait` on older Helm versions. Kubernetes rollout failures therefore roll back automatically. The deploy script records the last successful Helm revision before upgrade. It then tests the HTTPS readiness route and publishes the deployment event to Kafka. If either post-upgrade check fails, the exit trap runs `helm rollback` to the saved revision. If this was the first install, it uninstalls the failed release.
+Three levels, from automatic to manual.
 
-Inspect releases and revisions with:
+## 1. Automatic, during every tenant deployment
+
+`scripts/deploy-tenant.sh` (used by *Website App Deployment* and the local setup):
+
+1. remembers the current Helm revision;
+2. runs `helm upgrade --install … --rollback-on-failure --wait` (`--atomic` on older Helm), so a rollout that
+   does not become ready in time is rolled back by Helm itself;
+3. then checks the HTTPS readiness URL and runs the Helm test (which publishes `WebsiteCreated` to Kafka);
+4. if any of these fail, an exit trap runs `helm rollback <release> <saved revision>`
+   (or uninstalls a first-time install), and the workflow publishes `WebsiteDeploymentFailed` to Kafka
+   and fails, so the run is red and the reason is in its log and artifact.
+
+The previous pods keep serving until new ones are ready (rolling update + PodDisruptionBudget), so a bad
+release never takes the site down.
+
+**Demo it:** run *Website App Deployment* with `simulate_failure=true` (see [proof-of-work.md](proof-of-work.md#3-cicd-with-rollback-and-events)).
+
+## 2. Redeploy a known-good version through CD
+
+Every image has an immutable tag `1.0.0-YYYYMMDDHHMMSS`, so "roll back" is "deploy the previous tag again",
+with the same approval and checks as any deployment:
 
 ```sh
-helm history user1 -n user1
+gh workflow run website_app_cd.yml --ref master -f tenant=user1 -f domain=user1.myyotta.com -f image_tag=<previous tag>
+gh workflow run website_provisioning_cd.yml --ref master -f image_tag=<previous tag>
+gh workflow run website_orchestrator_cd.yml --ref master -f image_tag=<previous tag>
+gh workflow run platform_cd.yml --ref master -f image_tag=<previous fluentd tag>
+```
+
+Previous tags are on each CI run's summary and on the package pages in GHCR.
+
+## 3. Manual Helm rollback
+
+```sh
+helm history user1 -n user1              # find the last good revision
+helm rollback user1 <revision> -n user1 --wait
 helm status user1 -n user1
 ```
 
-To roll back manually:
+Same for `website-provisioning`, `platform` (namespace `platform`) and `aiops-pod-doctor` (namespace `aiops`).
 
-```sh
-helm rollback user1 <revision> -n user1 --wait
-```
+## What a rollback does not undo
 
-Rollback preserves the previous deployment/image but does not restore changes made inside the tenant database. Tenant PostgreSQL data is stored on a persistent volume claim and remains across API rollbacks and pod restarts.
+Database contents. Each tenant's PostgreSQL data lives on a PersistentVolumeClaim and is kept across
+rollbacks and pod restarts. Schema changes must therefore stay backward compatible with the previous
+release (expand first, remove later), or be reverted by a separate migration.

@@ -13,7 +13,7 @@ metrics:
 ingress:
   enabled: true
   className: nginx
-  host: user1.localtest.me
+  host: user1.myyotta.com
   clusterIssuer: local-selfsigned
   path: /
   pathType: Prefix

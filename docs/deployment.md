@@ -14,7 +14,7 @@ The utility does not edit `/etc/hosts`; add the line it prints after setup if th
 
 ## 1. Prepare the Mac runner and cluster
 
-Install Docker Desktop, Kind, kubectl, Helm 3.17+, Python 3.12+, and a self-hosted GitHub Actions runner. Add the runner label `yotta-local-k8s`.
+Install Docker Desktop, Kind, kubectl, Helm 4.x, Python 3.12+, and a self-hosted GitHub Actions runner. Add the runner label `yotta-local-k8s`.
 
 Create a fine-grained token for this repository with **Actions: Read and write**. That permission allows the in-cluster orchestrator to call GitHub's workflow-dispatch endpoint. Keep the token in your shell environment and do not commit it:
 
@@ -68,8 +68,8 @@ Successful deployments publish `WebsiteCreated`. If Helm rollout, the HTTPS heal
 For direct deployment of the three sample tenants, use:
 
 ```sh
-IMAGE=ghcr.io/<owner>/website-app:<tag> \\
-ORCHESTRATOR_IMAGE=ghcr.io/<owner>/website-orchestrator:<tag> \\
+IMAGE=ghcr.io/<owner>/website-app:<tag> \
+ORCHESTRATOR_IMAGE=ghcr.io/<owner>/website-orchestrator:<tag> \
 PULL_IMAGE=true ./scripts/deploy-platform.sh
 ```
 
@@ -81,7 +81,7 @@ The service pipeline runs Python lint and unit tests, Bandit checks for risky co
 
 Each pushed image is tagged `MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS` (UTC build time), for example `1.0.0-20261116010802`. The deployment workflows reject any other format before touching the registry or the cluster. The repository owner portion of the GHCR image name is normalized to lowercase. Update the repository's `VERSION` file to change the major, minor, or patch part.
 
-`platform_ci.yml` renders and schema-validates the pinned cluster add-on charts, platform chart, and Prometheus/Grafana chart; it scans project-managed resources and Fluentd's image, then publishes a versioned Fluentd image. After CI succeeds, run `platform_cd.yml` manually with that image tag to install cluster add-ons, the platform release, and monitoring through Helm on the Mac runner. Website App Deployment and Website Provisioning Deployment also target the self-hosted Mac runner and use Helm for Kubernetes changes. The monitoring chart's remaining inherited Trivy findings are listed with reasons in [helm/monitoring/trivyignore](/Users/ashagupta/yotta-multitenant-platform/helm/monitoring/trivyignore). The CI workflows lint and render tenant and provisioning charts, validate their Kubernetes resources with Kubeconform, and scan rendered resources for high-risk security settings. Trivy's image scan reports a false positive for setuptools 70.3.0 from a replaced image layer; the final image contains fixed setuptools 80.10.2. That one advisory is documented in `.trivyignore`; other high and critical image findings still fail CI.
+`platform_ci.yml` renders and schema-validates the pinned cluster add-on charts, platform chart, and Prometheus/Grafana chart; it scans project-managed resources and Fluentd's image, then publishes a versioned Fluentd image. After CI succeeds, run `platform_cd.yml` manually with that image tag to install cluster add-ons, the platform release, and monitoring through Helm on the Mac runner. Website App Deployment and Website Provisioning Deployment also target the self-hosted Mac runner and use Helm for Kubernetes changes. The monitoring chart's remaining inherited Trivy findings are listed with reasons in [helm/monitoring/trivyignore](../helm/monitoring/trivyignore). The CI workflows lint and render tenant and provisioning charts, validate their Kubernetes resources with Kubeconform, and scan rendered resources for high-risk security settings. Trivy's image scan reports a false positive for setuptools 70.3.0 from a replaced image layer; the final image contains fixed setuptools 80.10.2. That one advisory is documented in `.trivyignore`; other high and critical image findings still fail CI.
 
 Before running **Platform Deployment** or **Website Orchestrator Deployment**, add the repository Actions secret `ORCHESTRATOR_GITHUB_TOKEN` (both store it in the cluster for the orchestrator, and both stop with an error if it is missing). Use a fine-grained token scoped to this repository with **Actions: Read and write** so the orchestrator can dispatch Website App Deployment. The workflow passes `github.repository` as `orchestrator.repository` and the secret as `orchestrator.githubToken` during the platform Helm upgrade.
 
@@ -95,8 +95,9 @@ Every deployment pipeline waits for a person to approve it before it changes any
 | Website Orchestrator Deployment (`website_orchestrator_cd.yml`) | `website-orchestrator-deployment` |
 | Website Provisioning Deployment (`website_provisioning_cd.yml`) | `website-provisioning-deployment` |
 | Website App Deployment (`website_app_cd.yml`, one run per tenant) | `website-app-deployment` |
+| AIOps Pod Doctor Deployment (`aiops_pod_doctor_cd.yml`) | `aiops-deployment` (also holds `GROK_API_KEY`) |
 
-Set them up once with `scripts/setup-deployment-approvals.sh` (needs the GitHub CLI, logged in with admin rights). It creates the four environments, makes you the required reviewer, and only allows deployments from `master`, `feature` and `feature/*`, the same branches the CD jobs accept. To add more reviewers: `scripts/setup-deployment-approvals.sh alice bob`.
+Set them up once with `scripts/setup-deployment-approvals.sh` (needs the GitHub CLI, logged in with admin rights). It creates the five environments, makes you the required reviewer, and only allows deployments from `master`, `feature` and `feature/*`, the same branches the CD jobs accept. To add more reviewers: `scripts/setup-deployment-approvals.sh alice bob`.
 
 When a deployment starts, the run shows **Review deployments**: open it, tick the environment and choose **Approve and deploy** (or **Reject**). Nothing runs on the Mac until then.
 
@@ -111,7 +112,9 @@ kubectl get hpa -n user1 -w
 python3 scripts/load_test.py --tenant user1 --seconds 180 --workers 40
 ```
 
-Each tenant has CPU and memory requests/limits, CPU and memory HPA targets, a ResourceQuota, a LimitRange, and a PDB. Prometheus scrapes the website metrics and Grafana provides the dashboard. Fluentd forwards pod logs to Loki.
+Each tenant has CPU and memory requests/limits, CPU and memory HPA targets (60 % / 75 %, 2–8 replicas), a ResourceQuota, a LimitRange, and a PDB. Prometheus scrapes the website metrics and Grafana provides the dashboard. Fluentd forwards pod logs to Loki.
+
+To demonstrate a rollback, run Website App Deployment with `simulate_failure=true`; see [rollback.md](rollback.md).
 
 ## Local development
 

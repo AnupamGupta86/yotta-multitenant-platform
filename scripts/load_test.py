@@ -1,6 +1,7 @@
 """Generate concurrent website requests to demonstrate HPA scaling; run with python3 scripts/load_test.py [--tenant NAME] [--seconds N] [--workers N]."""
 
 import argparse
+import re
 import ssl
 import threading
 import time
@@ -9,23 +10,24 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 DEFAULT_TENANT = "user1"
-SUPPORTED_TENANTS = ("user1", "user2", "user3")
 DEFAULT_HTTPS_PORT = 8443
 DEFAULT_DURATION_SECONDS = 180
 DEFAULT_WORKERS = 40
-DEFAULT_DOMAIN_SUFFIX = "localtest.me"
+DEFAULT_DOMAIN_SUFFIX = "myyotta.com"
 WORKLOAD_PATH = "/api/v1/workload"
 REQUEST_TIMEOUT_SECONDS = 10
 SUCCESS_STATUS = 200
 
 def main():
     parser = argparse.ArgumentParser(description="Generate CPU load to demonstrate website HPA scaling")
-    parser.add_argument("--tenant", choices=SUPPORTED_TENANTS, default=DEFAULT_TENANT)
-    parser.add_argument("--domain")
+    parser.add_argument("--tenant", default=DEFAULT_TENANT, help="any deployed tenant (default user1)")
+    parser.add_argument("--domain", help="default <tenant>.myyotta.com")
     parser.add_argument("--port", type=int, default=DEFAULT_HTTPS_PORT)
     parser.add_argument("--seconds", type=int, default=DEFAULT_DURATION_SECONDS)
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     args = parser.parse_args()
+    if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}[a-z0-9]", args.tenant):
+        parser.error("--tenant must be a DNS-safe tenant name, e.g. user1")
     domain = args.domain or f"{args.tenant}.{DEFAULT_DOMAIN_SUFFIX}"
     request_url = f"https://{domain}:{args.port}{WORKLOAD_PATH}"
     context = ssl._create_unverified_context()

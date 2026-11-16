@@ -10,6 +10,10 @@ LOCAL_HTTPS_PORT=8443
 LOCAL_HOST_IP=127.0.0.1
 PULL_IMAGE="${PULL_IMAGE:-true}"
 HELM_TIMEOUT=10m
+# Rollback demo: SIMULATE_FAILURE=true deploys a release whose readiness probe can never pass,
+# so the rollout fails, Helm rolls back to the last good revision and CD publishes WebsiteDeploymentFailed.
+SIMULATE_FAILURE="${SIMULATE_FAILURE:-false}"
+SIMULATED_FAILURE_TIMEOUT=2m
 ROLLBACK_TIMEOUT=5m
 HELM_TEST_TIMEOUT=3m
 HELM_ROLLBACK_OPTION=(--atomic)
@@ -81,6 +85,13 @@ else
   kind load docker-image "$image" --name "$cluster_name"
   kind load docker-image "$orchestrator_image" --name "$cluster_name"
 fi
+extra_helm_args=()
+if [[ "$SIMULATE_FAILURE" == "true" ]]; then
+  echo "SIMULATE_FAILURE=true: deploying a broken readiness probe to demonstrate automatic rollback" >&2
+  extra_helm_args=(--set probes.readiness.path=/simulated-failure)
+  HELM_TIMEOUT="$SIMULATED_FAILURE_TIMEOUT"
+fi
+
 helm upgrade --install "$release" "$TENANT_CHART" \
   --server-side=false \
   --namespace "$namespace" \
@@ -94,6 +105,7 @@ helm upgrade --install "$release" "$TENANT_CHART" \
   --set eventPublisher.enabled=true \
   --set eventPublisher.image="$orchestrator_image" \
   --set eventPublisher.correlationId="$correlation_id" \
+  ${extra_helm_args[@]+"${extra_helm_args[@]}"} \
   "${HELM_ROLLBACK_OPTION[@]}" --wait --timeout "$HELM_TIMEOUT"
 
 for ((attempt = 1; attempt <= READINESS_ATTEMPTS; attempt++)); do

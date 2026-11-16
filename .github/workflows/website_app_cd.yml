@@ -23,6 +23,11 @@ on:
         description: Provisioning request event ID
         type: string
         required: false
+      simulate_failure:
+        description: 'Rollback demo: deploy a broken readiness probe so Helm rolls back and a WebsiteDeploymentFailed event is sent'
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: read
   packages: read
@@ -44,6 +49,7 @@ jobs:
       IMAGE_TAG: ${{ inputs.image_tag || '' }}
       ORCHESTRATOR_IMAGE_TAG: ${{ inputs.orchestrator_image_tag || '' }}
       CORRELATION_ID: ${{ inputs.correlation_id || '' }}
+      SIMULATE_FAILURE: ${{ inputs.simulate_failure && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -116,6 +122,9 @@ jobs:
         run: |
           mkdir -p output
           kubectl get all,hpa,pdb,resourcequota,ingress --namespace "$TENANT" > "output/${TENANT}-resources.txt" 2>&1 || true
+          # Release revisions: after a failed deploy this shows the failed revision and the rollback
+          helm history "$TENANT" --namespace "$TENANT" > "output/${TENANT}-helm-history.txt" 2>&1 || true
+          kubectl get events --namespace "$TENANT" --sort-by=.lastTimestamp > "output/${TENANT}-events.txt" 2>&1 || true
           kubectl logs --namespace "$PLATFORM_NAMESPACE" deployment/"$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --tail=100 > output/kafka-events.log 2>&1 || true
           kubectl get pods --all-namespaces -o wide > output/cluster-pods.txt 2>&1 || true
       - uses: actions/upload-artifact@v6

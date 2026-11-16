@@ -1,181 +1,190 @@
-# Yotta website platform
+# Yotta multi-tenant website platform
 
-A small Python-based platform for running isolated customer websites. Each tenant gets a Kubernetes namespace, its own website API, and a private PostgreSQL database. Helm manages every Kubernetes deployment.
+A platform that gives every customer (tenant) an isolated website on Kubernetes: its own namespace,
+Flask app, private PostgreSQL, HTTPS host, autoscaling and quotas. A website is requested through an API,
+the request travels through Kafka, and GitHub Actions deploys it with Helm onto a local Kind cluster.
 
-## Assignment coverage
+## Deliverables at a glance
 
-The assignment is implemented across the service code, Helm charts, GitHub Actions workflows, and local demo scripts. In the latest end-to-end setup, all three sample tenants deployed and passed HTTPS readiness checks. GitHub CI is green on the current commit; automated GitHub CD still needs the registered runner's missing label.
+| Assignment item | Where it is | Proof |
+|---|---|---|
+| Tenants `user1`–`user3` in separate namespaces | `helm/website/` (one Helm release per tenant) | [proof §1](docs/proof-of-work.md#1-multi-tenant-websites-deployed) |
+| HTTPS Ingress per tenant, custom domains without cluster changes | `helm/website/templates/ingress.yaml`, cert-manager issuer in `helm/platform/` | §1 (`user4` via the API) |
+| Probes, requests/limits, network policies | `helm/website/templates/deployment.yaml`, `networkpolicy.yaml` | §1 isolation check |
+| Sample website in Flask | `services/website-app/` (Flask + gunicorn) | CI unit tests |
+| HPA (CPU + memory), quotas, PDB | `helm/website/templates/hpa.yaml`, `resourcequota.yaml`, `limitrange.yaml`, `pdb.yaml` | [proof §2](docs/proof-of-work.md#2-scaling-under-load) |
+| Load simulation | `scripts/load_test.py` | §2 |
+| CI: build, test, scan, publish images | `.github/workflows/*_ci.yml`, shared `service_ci.yml` | [proof §3](docs/proof-of-work.md#3-cicd-with-rollback-and-events) |
+| CD with approval, rollback on failure | `.github/workflows/*_cd.yml`, `scripts/deploy-tenant.sh`, [docs/rollback.md](docs/rollback.md) | §3 (`simulate_failure` run) |
+| Multiple branches / users | CI on `master`, `feature`, `feature/**`; tenant and domain are inputs | workflow files |
+| Single-node Kafka, deployment events | `helm/platform/templates/kafka.yaml`, `services/website-orchestrator/` | [proof §4](docs/proof-of-work.md#4-kafka-integration) |
+| Prometheus / Grafana dashboards, logs in Loki | `helm/monitoring/`, `helm/platform/files/website-dashboard.json`, Fluentd | [proof §5](docs/proof-of-work.md#5-observability-dashboards) |
+| Extra: AIOps for failing pods (Grok) | `aiops-pod-doctor/` | its README |
 
-| Assignment requirement | Status | Implementation and evidence |
-| --- | --- | --- |
-| Deploy `user1`, `user2`, and `user3` in separate namespaces | Verified in the latest local end-to-end setup | `scripts/e2e-setup.sh` and `helm/website`; all three namespaces and releases are deployed. See the [fresh validation report](docs/assignment-validation-2026-11-16.md) |
-| Automatically configure Ingress TLS for each website | Verified for all three tenants and provisioning API | `helm/website/templates/ingress.yaml`, `helm/platform/templates/cluster-issuer.yaml`; all four local certificates are Ready (self-signed) |
-| Readiness/liveness probes, resource requests/limits, and network policies | Configured; all three apps and databases are healthy | `helm/website/templates/deployment.yaml`, `helm/website/templates/networkpolicy.yaml`, `helm/website/values.yaml`; cross-tenant isolation was checked in the earlier demo |
-| Add custom tenant domains without recreating the cluster | Verified with the three matching tenant hosts | Provisioning event and tenant Helm releases supply each domain; current HTTPS readiness checks passed for all three |
-| Build and publish images; deploy; roll back on failure; publish Kafka events | Current CI and local end-to-end deploy passed; GitHub CD not verified | CI/CD workflows, `scripts/deploy-tenant.sh`, `helm/website/templates/event-publisher-test.yaml`; GitHub runner label still needs `yotta-local-k8s` |
-| Support multiple branches/users | Met in workflow configuration | Branch filters in `.github/workflows/`; tenant and domain are workflow inputs |
-| Use Node.js or Python Flask for the sample website | Not met as written | `services/website-app/src/server.py` currently uses Python's standard-library `http.server`; the provisioning API uses FastAPI |
-| HPA on CPU and memory, per-tenant quotas, and PDB | Configured and present for all tenants | `helm/website/templates/hpa.yaml`, `resourcequota.yaml`, and `pdb.yaml`; memory-based scaling is configured but has not been separately stress-tested |
-| Simulate load and demonstrate autoscaling | HPA is live; load demo is historical | `scripts/load_test.py`; earlier validation recorded 3,594 successful requests and scale-out from 2 to 8 replicas |
-| Prometheus/Grafana dashboards for cluster and website metrics | Stack and dashboard are live | `helm/monitoring/values.yaml`, `helm/platform/files/website-dashboard.json`; Prometheus, Grafana, Fluentd, Loki, and dashboard ConfigMap are present |
-| Single-node Kafka; produce and consume deployment events | Verified for the three setup deployments | `docker-compose.yml`, `helm/platform/templates/kafka.yaml`, `services/website-orchestrator/`; notifications logged for all three tenants and consumer lag is zero |
-| Required repo files, README, and proof of work | Repo/README met; fresh local setup proof saved | Dockerfiles, Helm charts, workflows, dated snapshots in `output/`, [local setup log](docs/logs/kind-local-installation.logs), and this report; no GitHub CD artifact was generated by the local setup |
+Collect all text evidence with `./scripts/collect-proof.sh`; screenshots are listed in [docs/proof-of-work.md](docs/proof-of-work.md).
 
-### What remains before claiming a fully verified live pipeline
-
-- The online self-hosted runner currently has `self-hosted`, `macOS`, and `ARM64` labels, but CD requires `yotta-local-k8s`. Add the required label, run the website deployment workflow, and retain its uploaded artifact.
-- The assignment's CPU autoscaling demo was exercised. The memory HPA target is configured, but memory-driven scale-out was not separately demonstrated.
-- Cross-tenant isolation and load scaling were demonstrated in the earlier run, but were not repeated during this setup.
-- The sample website uses Python's standard-library HTTP server rather than Node.js or Flask, as requested in the assignment examples.
-
-The three-tenant local setup now passes, and CI is green on the current commit. The remaining gaps are the required sample-app framework, an appropriately labeled runner for GitHub CD, and a fresh memory-based scaling demonstration. See the [fresh validation report](docs/assignment-validation-2026-11-16.md) for exact checks and results.
-
-## Architecture and workflow
+## Architecture
 
 ```mermaid
 flowchart LR
-    Dev[Developer push or pull request] --> CI[GitHub Actions CI]
+    Dev[Push / pull request] --> CI[GitHub Actions CI]
     CI --> Checks[Lint, tests, security scans, chart validation]
     Checks --> Registry[Versioned images in GHCR]
-    Registry --> CD[Approved or manual CD workflow]
+    Registry --> CD[CD workflow + manual approval]
     CD --> Runner[Self-hosted Mac runner]
     Runner --> Helm[Helm releases on Kind]
 
-    User[User submits tenant and domain] --> API[Provisioning API]
+    User[POST tenant + domain] --> API[Provisioning API - FastAPI]
     API --> DB[(Provisioning PostgreSQL)]
-    API --> Kafka[(Single-node Kafka)]
+    API --> Kafka[(Kafka: website-events)]
     Kafka --> Orch[Website orchestrator]
-    Orch --> CD
-    Helm --> Tenant[Tenant namespace: app, private PostgreSQL, Ingress/TLS]
-    Tenant --> Events[WebsiteCreated or WebsiteDeploymentFailed]
-    Events --> Kafka
+    Orch -->|workflow dispatch| CD
+    Helm --> Tenant[Tenant namespace: Flask app, PostgreSQL, Ingress/TLS, HPA]
+    Tenant -->|WebsiteCreated / WebsiteDeploymentFailed| Kafka
 
-    Tenant --> Metrics[Prometheus]
-    Metrics --> Grafana[Grafana dashboards]
-    Tenant --> Logs[Fluentd]
-    Logs --> Loki[Loki]
-    Loki --> Grafana
+    Tenant --> Prom[Prometheus] --> Grafana[Grafana]
+    Tenant --> Fluentd[Fluentd] --> Loki[Loki] --> Grafana
 ```
 
-CI runs validation on changes and publishes immutable/versioned service images after successful validation. CD is a separate workflow: platform and provisioning deployments are manual, while tenant deployment is dispatched after a provisioning event is accepted. The local CD workflows require the configured Mac runner. Helm owns Kubernetes resources; a failed tenant rollout or health check triggers rollback, then the workflow publishes a failure event.
+| Component | Namespace | Chart / code |
+|---|---|---|
+| Tenant website + PostgreSQL | `<tenant>` | `helm/website`, `services/website-app` |
+| Provisioning API + its PostgreSQL | `platform` | `helm/website-provisioning`, `services/website-provisioning` |
+| Kafka, orchestrator, Fluentd, Loki, dashboard | `platform`, `observability` | `helm/platform`, `services/website-orchestrator` |
+| Prometheus, Grafana | `observability` | `helm/monitoring` (kube-prometheus-stack values) |
+| Ingress-NGINX, cert-manager, Calico, metrics-server | cluster | `helm/cluster-addons`, `scripts/deploy-cluster-addons.sh` |
+| AIOps pod doctor | `aiops` | `aiops-pod-doctor/` |
 
-Example tenant install (the deployment script also supplies the tenant-specific domain, app image, and orchestrator image):
+## Repository layout
 
-```sh
-helm upgrade --install user4 helm/website --namespace user4 --create-namespace \\
-  --set tenant.name=user4 \\
-  --set ingress.host=user4.myyotta.com \\
-  --set-string image.repository=ghcr.io/your-github-owner/website-app \\
-  --set-string image.tag=1.0.0-20261115081354-43693315269 \\
-  --wait --timeout 10m
+```
+services/            website-app (Flask), website-provisioning (FastAPI), website-orchestrator (Kafka consumer)
+helm/                website (per tenant), website-provisioning, platform, monitoring, cluster-addons
+.github/workflows/   one CI and one CD workflow per component, shared service_ci.yml
+scripts/             local setup, tenant deploy with rollback, load test, evidence collection
+kind/                Kind cluster definition (ports 8080/8443 on the Mac)
+aiops-pod-doctor/    extra: failing-pod analysis with Grok
+docs/                deployment, architecture, rollback, proof of work
 ```
 
-## Request flow
+## Deployment steps
 
-1. A user submits a tenant name and domain to the Provisioning API.
-2. The FastAPI service validates the request, saves it in PostgreSQL, and publishes `WebsiteProvisioningRequested` to Kafka.
-3. The deployment orchestrator consumes that event and dispatches the website-app deployment pipeline.
-4. GitHub Actions installs or upgrades the website with Helm on the Mac's Kind cluster.
-5. The workflow checks the HTTPS health endpoint. A successful Helm test publishes `WebsiteCreated`. If deployment fails, Helm rolls back and the workflow publishes `WebsiteDeploymentFailed`.
-6. The lifecycle consumer logs a human-readable notification and can forward it to a configured webhook.
+### Option A: everything locally in one command
 
-## First-time setup
-
-Install Docker Desktop, Kind, kubectl, Helm 3.17+, Python 3.12+, and a self-hosted GitHub Actions runner on the Mac. Create a fine-grained GitHub token for the target repository with **Actions: Read and write**. The orchestrator uses it only to dispatch the deployment workflow.
-
-Set the repository and token before installing the local platform:
+Needs Docker Desktop, Kind, kubectl, Helm 4.x and Python 3.12+ on the Mac.
 
 ```sh
-export ORCHESTRATOR_REPOSITORY=owner/repository
-export ORCHESTRATOR_GITHUB_TOKEN=your-fine-grained-token
-./scripts/setup-kind.sh
+./scripts/e2e-setup.sh          # Kind cluster, add-ons, monitoring, platform, provisioning API, user1-3
 ```
 
-The token is stored in the platform's Kubernetes Secret so the in-cluster orchestrator can dispatch workflows. For a production cluster, use an external secret manager instead of Helm values.
+Then add the hosts entry it prints:
 
-After the cluster is ready, run **Actions → Website Provisioning Deployment → Run workflow** from `master` and provide the published `image_tag`. This separately installs or upgrades the provisioning API and its database. Changes to the service still run its CI checks and publish an image, but do not deploy it automatically.
-
-## Submit a website request
-
-Forward the provisioning API to your Mac:
-
-```sh
-kubectl port-forward -n platform svc/website-provisioning 3001:80
+```text
+127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com
 ```
 
-Submit a tenant and domain to the FastAPI endpoint. The `tenant` becomes the namespace and Helm release name; the domain is added to Ingress dynamically.
+### Option B: through GitHub Actions (the CI/CD path)
+
+One-time setup:
+
+1. Register the Mac as a self-hosted runner with label `yotta-local-k8s` ([docs/local-runner.md](docs/local-runner.md)).
+2. Add the repository secret `ORCHESTRATOR_GITHUB_TOKEN`: a fine-grained token with **Actions: Read and write**,
+   used by the orchestrator to start deployments (`gh secret set ORCHESTRATOR_GITHUB_TOKEN`).
+3. Create the approval environments: `./scripts/setup-deployment-approvals.sh`.
+
+Deploy, in this order, each with the image tag shown on its CI run summary (approve each run):
 
 ```sh
-curl -sS -X POST http://127.0.0.1:3001/api/v1/websites \
+gh workflow run platform_cd.yml             --ref master -f image_tag=<platform CI tag>
+gh workflow run website_orchestrator_cd.yml --ref master -f image_tag=<orchestrator CI tag>
+gh workflow run website_provisioning_cd.yml --ref master -f image_tag=<provisioning CI tag>
+```
+
+### Request a website
+
+```sh
+curl -k -i -X POST https://provisioning.myyotta.com:8443/api/v1/websites \
   -H 'Content-Type: application/json' \
-  -d '{"tenant":"user4","domain":"user4.localtest.me"}'
+  -d '{"tenant":"user4","domain":"user4.myyotta.com"}'
 ```
 
-The API returns `202 Accepted` with an event ID. It publishes `WebsiteProvisioningRequested`. After the deployment, the platform publishes either `WebsiteCreated` or `WebsiteDeploymentFailed`. Follow the event and workflow logs with:
+`202 Accepted` → `WebsiteProvisioningRequested` on Kafka → the orchestrator starts *Website App Deployment*
+(approve it) → Helm installs `user4` → the Helm test publishes `WebsiteCreated`. Add `user4.myyotta.com` to
+`/etc/hosts`, then `curl -k https://user4.myyotta.com:8443/api/v1`.
 
-```sh
-kubectl logs -n platform deployment/website-orchestrator -f
-kubectl logs -n platform deployment/website-provisioning -f
-```
+More detail: [docs/deployment.md](docs/deployment.md).
 
-For this local demo, `*.localtest.me` resolves to loopback and the self-signed certificate requires `curl -k` or a browser exception.
+## Scaling
 
-## What the assignment demo includes
-
-- Sample tenants `user1`, `user2`, and `user3`, plus dynamic tenant names and domains.
-- Separate PostgreSQL databases, Kubernetes namespaces, Secrets, and network policies.
-- TLS Ingress, liveness/readiness probes, CPU and memory requests/limits, quotas, and PodDisruptionBudgets.
-- CPU/memory HPA, a Python load generator, Prometheus, Grafana dashboards, Fluentd, and Loki.
-- Kafka request and outcome events, workflow dispatch, Helm rollback, Docker image scans, and build evidence uploaded as a GitHub Actions artifact.
-- A timestamped image version such as `1.0.0-20261115081354-43693315269`; edit `VERSION` to change the major, minor, or patch number.
-
-Run the load generator while watching the HPA:
+Each tenant has an HPA (2–8 replicas, CPU 60 %, memory 75 %, fast scale-up, 2-minute scale-down window),
+a ResourceQuota and LimitRange, and a PodDisruptionBudget so at least one pod stays up during node drains.
 
 ```sh
 kubectl get hpa -n user1 -w
 python3 scripts/load_test.py --tenant user1 --seconds 180 --workers 40
 ```
 
-## CI/CD and local deployment
+`/api/v1/workload` is deliberately CPU-heavy, so 40 workers push CPU over 60 % and the HPA scales out.
 
-Service workflows validate and publish Python service images on `master` and feature branches. Each published image is tagged `MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS` (e.g. `1.0.0-20261116010802`, UTC build time to the second), while commit tags remain available for tracing. Pull requests run the same validation without publishing. Website App CI builds and publishes the `website-app` image; a separate website-app deployment pipeline runs on the Mac only after a website request is accepted by Kafka. Provisioning deployment is manual and accepts a selected published image tag. Platform CI validates the charts and Fluentd image and publishes a versioned image; the separate manual Platform Deployment workflow installs cluster add-ons, the platform chart, and Prometheus/Grafana through Helm on the Mac.
+## Rollback
 
-CI checks Python style and unit tests, scans Python code and dependencies, checks for committed secrets, lints Dockerfiles, scans built images, and starts each API image against PostgreSQL to check its health endpoint. The Kafka workflow also sends an event through a real local broker. Helm charts are linted, rendered, checked against Kubernetes schemas, and scanned for deployment security settings.
+Automatic on every tenant deployment (Helm `--rollback-on-failure` plus a post-deploy health check and
+`helm rollback`), with a `WebsiteDeploymentFailed` Kafka event. Try it with
+`gh workflow run website_app_cd.yml -f tenant=user1 -f domain=user1.myyotta.com -f simulate_failure=true`.
+Manual options (redeploy an older tag, `helm rollback`): [docs/rollback.md](docs/rollback.md).
 
-To deploy the three sample tenants manually through Helm:
+## Kafka events (topic `website-events`)
 
-```sh
-IMAGE=ghcr.io/<owner>/website-app:<image-tag> \\
-ORCHESTRATOR_IMAGE=ghcr.io/<owner>/website-orchestrator:<image-tag> \\
-PULL_IMAGE=true ./scripts/deploy-platform.sh
-```
+| Event | Sent by | When |
+|---|---|---|
+| `WebsiteProvisioningRequested` | Provisioning API | a website request was accepted and stored |
+| `WebsiteCreated` | Helm test job in the tenant release | the new website passed its checks |
+| `WebsiteDeploymentFailed` | Website App Deployment workflow | rollout or health check failed and was rolled back |
 
-To check a deployment and capture local evidence:
+The orchestrator consumes all three: it starts the deployment for requests and logs a readable notification
+for outcomes (optionally also to `NOTIFICATION_WEBHOOK_URL`). Events share a `correlation_id`.
 
-```sh
-./scripts/verify-deployment.sh user1 user1.localtest.me
-```
+## Observability
 
-Docker Compose is for local development and the Kafka integration test. It defaults the orchestrator to dry-run mode. To make Compose dispatch a real GitHub workflow, set `ORCHESTRATOR_DRY_RUN=false`, `ORCHESTRATOR_REPOSITORY`, and `ORCHESTRATOR_GITHUB_TOKEN`.
+- **Metrics:** Prometheus scrapes each tenant's `/metrics` (ServiceMonitor) plus cluster metrics.
+- **Dashboards:** Grafana dashboard *Yotta Website Platform*: request rate per tenant/endpoint/status,
+  success %, replicas, CPU, memory, restarts, database readiness.
+  `kubectl port-forward -n observability svc/prometheus-grafana 3000:80` → http://localhost:3000.
+- **Logs:** Fluentd ships all pod logs to Loki; search them in Grafana → Explore → Loki.
 
-Deployment outcome notifications are written to the website-orchestrator logs by default, which Fluentd forwards to Loki. To also send them to a webhook, set `NOTIFICATION_WEBHOOK_URL` before running `scripts/setup-kind.sh`; the platform chart stores it in a Kubernetes Secret.
+## CI/CD
 
-## AIOps pod doctor (negative use case)
+| Workflow | Runs on | Does |
+|---|---|---|
+| `website_app_ci`, `website_provisioning_ci`, `website_orchestrator_ci`, `aiops_pod_doctor_ci` | GitHub-hosted | chart lint + schema + security scan, then `service_ci.yml`: ruff, unit tests, Bandit, pip-audit, Gitleaks, hadolint, image build, Trivy, container health check, publish to GHCR |
+| `platform_ci` | GitHub-hosted | validates add-on, platform and monitoring charts; builds and publishes the Fluentd image |
+| `*_cd` | self-hosted Mac | validate the tag, wait for approval, load the image into Kind, `helm upgrade --install`, verify |
 
-`aiops-pod-doctor/` (its own folder: service, Helm chart, scripts) runs in the `aiops` namespace. Every 5 seconds it looks for a failing pod (CrashLoopBackOff, ImagePullBackOff, missing Secret, Unschedulable, Failed), takes **one** it has not analysed yet, sends its status, events and logs (secrets masked) to **Grok**, and prints the root cause and a workaround. Reports are also served at `/reports`. Details: [aiops-pod-doctor/README.md](aiops-pod-doctor/README.md).
+- Pull requests run the same checks without publishing. Pushes to `master`, `feature`, `feature/**` publish.
+- Image tag: `MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS` (UTC build time), e.g. `1.0.0-20261116010802`;
+  the version comes from `VERSION`. CD rejects any other format.
+- Every CD job waits for approval in its own GitHub environment (`platform-deployment`,
+  `website-orchestrator-deployment`, `website-provisioning-deployment`, `website-app-deployment`, `aiops-deployment`).
+- Dependabot opens weekly grouped PRs for GitHub Actions, Python packages and Docker base images.
 
-One-time setup: put the xAI API key in the `aiops-deployment` GitHub environment (the CD job reads it from there):
+## AIOps pod doctor (extra)
 
-```sh
-./scripts/setup-deployment-approvals.sh                # creates aiops-deployment with approval
-gh secret set GROK_API_KEY --env aiops-deployment      # paste the xAI key when asked
-gh variable set GROK_MODEL --env aiops-deployment --body grok-4   # optional
-```
+Every 5 seconds it finds one failing pod, sends its status, events and logs (secrets masked) to Grok and
+reports the root cause and a workaround. See [aiops-pod-doctor/README.md](aiops-pod-doctor/README.md).
 
-Deploy (after AIOps Pod Doctor CI published a tag); the run breaks a demo pod and adds Grok's report to its summary:
+## Local development
 
-```sh
-gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag> -f demo_failure=crash
-```
+`docker compose up` runs PostgreSQL, Kafka and the three services. The orchestrator is in dry-run mode
+there, so requests do not start real workflows (set `ORCHESTRATOR_DRY_RUN=false`, `ORCHESTRATOR_REPOSITORY`
+and `ORCHESTRATOR_GITHUB_TOKEN` to change that). Unit tests: `cd services/<name> && python -m pytest -q`.
 
-See [deployment instructions](docs/deployment.md), [architecture](docs/architecture.md), [local runner setup](docs/local-runner.md), and [rollback notes](docs/rollback.md).
+## Production notes
+
+This runs on a laptop by design. For production: a managed cluster and a real DNS zone, Let's Encrypt or a
+corporate CA instead of the self-signed issuer, secrets from a secret manager (External Secrets / Vault)
+instead of Helm values, a managed PostgreSQL and a replicated Kafka, and GitHub OIDC instead of long-lived tokens.
+
+## Documents
+
+[Deployment](docs/deployment.md) · [Architecture](docs/architecture.md) · [Rollback](docs/rollback.md) ·
+[Proof of work](docs/proof-of-work.md) · [Self-hosted runner](docs/local-runner.md)

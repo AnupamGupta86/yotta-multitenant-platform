@@ -1,16 +1,24 @@
+"""Tenant database access and the WSGI entry point that gunicorn serves (src.server:app)."""
+
 import logging
 import os
 import time
-from http.server import ThreadingHTTPServer
 
 import psycopg
 
-from src.app import create_handler
+from src.app import create_app
 
 logger = logging.getLogger("website-app")
 
+DATABASE_SETTINGS = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
 
-def ping_database():
+
+def check_settings() -> None:
+    if not os.environ.get("DATABASE_URL") and not all(os.environ.get(key) for key in DATABASE_SETTINGS):
+        raise RuntimeError("Set DATABASE_URL or the website database settings")
+
+
+def ping_database() -> None:
     database = os.environ.get("DATABASE_URL")
     if database:
         connection = psycopg.connect(database, connect_timeout=3)
@@ -26,7 +34,7 @@ def ping_database():
         connection.execute("SELECT 1")
 
 
-def wait_for_database(attempts=30, interval_seconds=2):
+def wait_for_database(attempts: int = 30, interval_seconds: float = 2) -> None:
     for attempt in range(attempts):
         try:
             ping_database()
@@ -38,23 +46,5 @@ def wait_for_database(attempts=30, interval_seconds=2):
             time.sleep(interval_seconds)
 
 
-def main():
-    if not os.environ.get("DATABASE_URL") and not all(
-        os.environ.get(key) for key in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
-    ):
-        raise RuntimeError("Set DATABASE_URL or the website database settings")
-    wait_for_database()
-    port = int(os.environ.get("PORT", "3000"))
-    host = os.environ.get("HOST", "127.0.0.1")
-    server = ThreadingHTTPServer((host, port), create_handler(ping_database))
-    print(f"website-app listening on {port}", flush=True)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
-
-
-if __name__ == "__main__":
-    main()
+# gunicorn imports this module and serves `app`; the startup checks run in gunicorn.conf.py
+app = create_app(ping_database)

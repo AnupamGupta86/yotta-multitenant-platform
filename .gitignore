@@ -8,3 +8,6 @@ output/
 self-hosted/*
 !self-hosted/
 !self-hosted/self-hosted.sh
+
+# macOS folder metadata
+.DS_Store

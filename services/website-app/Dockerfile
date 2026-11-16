@@ -5,9 +5,11 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir pip==26.3 'setuptools>=78.1.1,<81' && \
     python -m pip install --no-cache-dir -r requirements.txt
+COPY gunicorn.conf.py ./
 COPY src ./src
 RUN groupadd --gid 10001 app && useradd --uid 10001 --gid app --no-create-home app
 USER 10001:10001
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health/live', timeout=2)"]
-CMD ["python", "-m", "src.server"]
+# Flask app served by gunicorn (settings in gunicorn.conf.py)
+CMD ["gunicorn", "src.server:app"]
