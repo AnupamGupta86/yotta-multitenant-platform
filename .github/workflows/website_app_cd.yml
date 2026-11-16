@@ -127,7 +127,7 @@ jobs:
           kubectl get events --namespace "$TENANT" --sort-by=.lastTimestamp > "output/${TENANT}-events.txt" 2>&1 || true
           kubectl logs --namespace "$PLATFORM_NAMESPACE" deployment/"$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --tail=100 > output/kafka-events.log 2>&1 || true
           kubectl get pods --all-namespaces -o wide > output/cluster-pods.txt 2>&1 || true
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: website-deployment-evidence-${{ github.run_id }}

@@ -135,7 +135,7 @@ jobs:
           exit-code: '1'
           severity: CRITICAL,HIGH
       - name: Lint Fluentd Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: helm/monitoring/fluentd/Dockerfile
       - uses: docker/setup-buildx-action@v4
