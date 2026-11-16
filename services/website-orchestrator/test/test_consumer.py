@@ -43,7 +43,9 @@ class DeploymentOrchestratorTests(unittest.TestCase):
         self.assertEqual(payload["ref"], "master")
         self.assertEqual(payload["inputs"]["tenant"], "user2")
         self.assertEqual(payload["inputs"]["correlation_id"], "event-123")
-        self.assertEqual(payload["inputs"]["image"], "")
+        self.assertEqual(payload["inputs"]["image_tag"], "")
+        # every input sent must exist in website_app_cd.yml, or GitHub rejects the dispatch (HTTP 422)
+        self.assertEqual(set(payload["inputs"]), {"tenant", "domain", "image_tag", "correlation_id"})
 
     def test_missing_dispatch_credentials_leave_request_unprocessed(self):
         with self.assertRaisesRegex(RuntimeError, "GH_TOKEN"):

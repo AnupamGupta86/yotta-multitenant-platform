@@ -12,13 +12,13 @@ on:
         type: string
         required: true
       image_tag:
-        description: Exact published website-app image tag to deploy
+        description: website-app image tag to deploy (empty = the newest published one)
         type: string
-        required: true
+        required: false
       orchestrator_image_tag:
-        description: Exact published website-orchestrator image tag to use for deployment events
+        description: website-orchestrator image tag for the deployment event (empty = the one running in the cluster)
         type: string
-        required: true
+        required: false
       correlation_id:
         description: Provisioning request event ID
         type: string
@@ -41,8 +41,8 @@ jobs:
     env:
       TENANT: ${{ inputs.tenant }}
       DOMAIN: ${{ inputs.domain }}
-      IMAGE_TAG: ${{ inputs.image_tag }}
-      ORCHESTRATOR_IMAGE_TAG: ${{ inputs.orchestrator_image_tag }}
+      IMAGE_TAG: ${{ inputs.image_tag || '' }}
+      ORCHESTRATOR_IMAGE_TAG: ${{ inputs.orchestrator_image_tag || '' }}
       CORRELATION_ID: ${{ inputs.correlation_id || '' }}
     steps:
       - uses: actions/checkout@v7
@@ -51,10 +51,6 @@ jobs:
       - name: Load shared pipeline defaults
         id: pipeline
         run: bash .github/scripts/load-pipeline-config.sh
-      - name: Validate selected image tags
-        run: |
-          bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
-          bash .github/scripts/validate-image-tag.sh "$ORCHESTRATOR_IMAGE_TAG"
       - name: Confirm local Kind cluster and platform services
         run: |
           kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
@@ -64,11 +60,10 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: printf '%s' "$GHCR_TOKEN" | docker login "$CONTAINER_REGISTRY" --username "$GHCR_USER" --password-stdin
-      - name: Normalize image owner for GHCR
-        run: |
-          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$WEBSITE_APP_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
-          echo "ORCHESTRATOR_IMAGE=$CONTAINER_REGISTRY/$owner/$WEBSITE_ORCHESTRATOR_IMAGE:$ORCHESTRATOR_IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: Choose the images (requested tags, or newest website-app + running orchestrator)
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/resolve-website-images.sh
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ steps.pipeline.outputs.python_version }}

@@ -25,6 +25,17 @@ case "$(docker exec "$node" uname -m)" in
   *) echo "unsupported node architecture: $(docker exec "$node" uname -m)" >&2; exit 1 ;;
 esac
 
+# Already on every node (for example the orchestrator image that is running right now, or an
+# image built locally by setup-kind.sh)? Then there is nothing to pull or load.
+missing=0
+for each_node in $(kind get nodes --name "$cluster"); do
+  docker exec "$each_node" crictl inspecti "$image" >/dev/null 2>&1 || missing=1
+done
+if (( missing == 0 )); then
+  echo "$image is already on every node of Kind cluster '$cluster'; nothing to load"
+  exit 0
+fi
+
 # For a multi-platform image, find the digest of the linux/<arch> manifest. Attestation
 # entries are listed as unknown/unknown, so they never match. A single-platform image has
 # no list at all, and is simply pulled as it is.

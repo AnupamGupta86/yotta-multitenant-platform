@@ -34,7 +34,7 @@ def dispatch_website(event, environ=None):
         "inputs": {
             "tenant": event["tenant"],
             "domain": event["domain"],
-            "image": event.get("image", ""),
+            "image_tag": event.get("image_tag", ""),  # empty: the workflow deploys the newest image
             "correlation_id": event["event_id"],
         },
     }
