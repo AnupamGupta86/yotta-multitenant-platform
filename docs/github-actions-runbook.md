@@ -87,7 +87,7 @@ yotta-multitenant-platform/
 ├── aiops-pod-doctor/             Extra: explains failing pods with Grok
 │   ├── service/                  Python: detector, RCA, Grok client, e-mail, CronJob run + tests
 │   ├── helm/                     Deployment, Service, read-only ServiceAccount/ClusterRole
-│   └── scripts/                  demo-failure.sh (break a demo pod), run-report-job.sh (start one report run now)
+│   └── scripts/                  run-report-job.sh (start one report run now)
 │
 ├── kind/cluster.yaml             Kind cluster: nodes, HTTP 8081 / HTTPS 8443 on the Mac
 ├── database/init/                Local docker-compose database bootstrap
@@ -312,17 +312,15 @@ gh workflow run website_app_cd.yml --ref master -f tenant=user1 -f domain=user1.
 | Input | Required | Value |
 |---|---|---|
 | `image_tag` | yes | tag from AIOps Pod Doctor CI |
-| `demo_failure` | no | `none` (default), `crash`, `image-pull`, `missing-secret` |
 
 Needs, on environment `aiops-deployment`: secrets `GROK_API_KEY`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
 `REPORT_EMAIL_TO` (the run **fails** if any is missing); optional variables `GROK_MODEL`, `SMTP_HOST`, `SMTP_PORT`.
 Steps: tag and cluster checks → load image → store Secrets `aiops-grok-api-key` and `aiops-smtp` → Helm release
-in `aiops` (CronJob `aiops-pod-doctor-report`, every minute) → optional: break a demo pod in `aiops-demo` and wait
-until it fails → run one report now (RCA + e-mail; log in the run summary) → delete the demo pod.
+in `aiops` (CronJob `aiops-pod-doctor-report`, every minute) → run one report now (RCA + e-mail; log in the
+run summary).
 
 ```sh
-gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag>                      # deploy + one report run
-gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag> -f demo_failure=crash  # with a demo failure
+gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag>    # deploy + one report run
 ```
 
 ### Approving a deployment

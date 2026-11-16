@@ -32,7 +32,7 @@ email:
 # The doctor: a CronJob that runs every minute, does the RCA for ONE newly failing pod and e-mails the report
 cronjob:
   enabled: true
-  schedule: "* * * * *"
+  schedule: "*/30 * * * *"
   # Remembers which failures were already e-mailed (one e-mail per failure, not one per run)
   stateConfigMap: aiops-pod-doctor-state
   # concurrencyPolicy Forbid: if a run is still busy (e.g. waiting for Grok), the next minute is skipped

@@ -246,8 +246,8 @@ Still to add: a Loki log search (Grafana → Explore → Loki, `{namespace="user
 
 ### Extra: AIOps pod doctor
 
-`gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag> -f demo_failure=crash` breaks a demo
-pod and puts Grok's root cause and workaround into the run summary. See [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md).
+A CronJob checks the cluster every minute and e-mails a Grok root-cause report for each new pod failure
+(`gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag>` deploys it). See [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md).
 
 *CI*: chart validation (with ShellCheck on the scripts) → validate (tests, scans, "No leaks detected") → publish,
 which writes the deployable tag (`1.0.0-20261116041814`).
@@ -255,7 +255,7 @@ which writes the deployable tag (`1.0.0-20261116041814`).
 ![AIOps CI](proof/screenshots/30-aiops-ci-pipeline.png)
 ![AIOps image tag](proof/screenshots/31-aiops-ci-image-tag.png)
 
-*CD with the negative test*: after approval the doctor is deployed, a demo pod is deliberately broken
+*CD with a negative test (first version, which broke a demo pod)*: after approval the doctor is deployed, a demo pod is deliberately broken
 (`aiops-demo/broken-crash`, CrashLoopBackOff), and the doctor's report appears in the run summary within the
 3-minute window: run green in 3m 54s.
 

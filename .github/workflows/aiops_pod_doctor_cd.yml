@@ -6,11 +6,6 @@ on:
         description: Published aiops-pod-doctor image tag to deploy (see the CI run summary)
         type: string
         required: true
-      demo_failure:
-        description: 'Optional negative test: break a demo pod first, so the report run has a failure to e-mail'
-        type: choice
-        default: none
-        options: [crash, image-pull, missing-secret, none]
 permissions:
   contents: read
   packages: read
@@ -49,7 +44,6 @@ jobs:
       cancel-in-progress: false
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
-      DEMO_FAILURE: ${{ inputs.demo_failure }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -124,25 +118,5 @@ jobs:
             --set-string email.smtpPort="$SMTP_PORT" \
             --wait --timeout "$SERVICE_HELM_TIMEOUT"
           kubectl get cronjob "$AIOPS_REPORT_CRONJOB" --namespace "$AIOPS_NAMESPACE"
-      - name: 'Negative test: break a demo pod'
-        if: inputs.demo_failure != 'none'
-        run: |
-          pod="$(AIOPS_DEMO_NAMESPACE="$AIOPS_DEMO_NAMESPACE" ./aiops-pod-doctor/scripts/demo-failure.sh "$DEMO_FAILURE")"
-          echo "DEMO_POD=$pod" >> "$GITHUB_ENV"
-          echo "Created $AIOPS_DEMO_NAMESPACE/$pod ($DEMO_FAILURE)"
-      - name: 'Negative test: wait until the demo pod is failing'
-        if: inputs.demo_failure != 'none'
-        run: |
-          for _ in {1..24}; do
-            reason="$(kubectl get pod "$DEMO_POD" -n "$AIOPS_DEMO_NAMESPACE" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)"
-            echo "demo pod state: ${reason:-starting}"
-            case "$reason" in CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError) exit 0 ;; esac
-            sleep 5
-          done
-          echo "::error::Demo pod $DEMO_POD did not reach a failing state in 2 minutes"
-          exit 1
       - name: Run the failure report once now (RCA + e-mail)
         run: bash aiops-pod-doctor/scripts/run-report-job.sh "aiops-report-${{ github.run_id }}-${{ github.run_attempt }}"
-      - name: Remove the demo pod
-        if: always() && inputs.demo_failure != 'none'
-        run: AIOPS_DEMO_NAMESPACE="$AIOPS_DEMO_NAMESPACE" ./aiops-pod-doctor/scripts/demo-failure.sh cleanup

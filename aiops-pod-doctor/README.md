@@ -76,7 +76,6 @@ Any SMTP account works. With **Gmail** (needs 2-Step Verification on the account
 |---|---|
 | `service/` | Python code, unit tests, Dockerfile |
 | `helm/` | CronJob, read-only ServiceAccount/ClusterRole, Role for the state ConfigMap |
-| `scripts/demo-failure.sh` | creates a broken demo pod (negative test) or cleans it up |
 | `scripts/run-report-job.sh` | starts one report run now (instead of waiting for the next minute) and shows its log |
 
 The workflows live in `.github/workflows/aiops_pod_doctor_ci.yml` and `aiops_pod_doctor_cd.yml`.
@@ -118,15 +117,14 @@ Helm values: `cronjob.schedule` (default `* * * * *`, every minute), `email.*`, 
   container health check, publish `ghcr.io/<owner>/aiops-pod-doctor:1.0.0-<timestamp>`).
 * **CD** `aiops_pod_doctor_cd.yml` (manual, approval on `aiops-deployment`): stores the Grok key and the
   e-mail login as Kubernetes Secrets (**fails if either is missing**), deploys the chart into `aiops`, and
-  runs one report immediately (its log goes to the run summary). Optional negative test
-  (`demo_failure=crash|image-pull|missing-secret`, default `none`): break a demo pod first, so that run
-  has a failure to e-mail.
+  runs one report immediately (its log goes to the run summary). To see a report, break one of your own
+  apps (below); the next run e-mails it.
 
 ## Try it
 
 ```bash
 # Deploy (after CI published a tag)
-gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag> -f demo_failure=crash
+gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag>
 
 # Break one of your own apps (old pods keep serving), get the e-mail within a minute
 kubectl set image deployment/user1-app website-app=ghcr.io/anupamgupta86/website-app:does-not-exist -n user1

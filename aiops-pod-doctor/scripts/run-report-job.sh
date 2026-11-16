@@ -25,8 +25,15 @@ until (( SECONDS >= deadline )); do
   sleep 5
 done
 
-log="$(kubectl logs job/"$job" -n "$namespace" --tail=200 2>&1 || true)"
+log="$(kubectl logs job/"$job" -n "$namespace" --tail=200 --pod-running-timeout=30s 2>&1 || true)"
 printf '%s\n' "$log"
+if [[ "$result" != succeeded ]]; then
+  # Show why the run did not finish: pod state, its events (image pull, volumes, scheduling) and the job
+  echo "----- diagnostics -----"
+  kubectl get pods -n "$namespace" -l job-name="$job" -o wide || true
+  kubectl describe pods -n "$namespace" -l job-name="$job" | sed -n '/^Events:/,$p' || true
+  kubectl describe job "$job" -n "$namespace" | sed -n '/^Events:/,$p' || true
+fi
 fence="$(printf '\140\140\140')"   # a Markdown code fence (three backticks)
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
