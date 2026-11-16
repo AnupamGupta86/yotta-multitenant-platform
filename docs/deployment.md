@@ -37,7 +37,7 @@ The provisioning release owns a separate PostgreSQL StatefulSet, persistent volu
 The platform Ingress serves the Provisioning API at `provisioning.myyotta.com`. Each tenant has its own Ingress host, created by the tenant Helm release. For local Kind testing, add these entries to `/etc/hosts` on the Mac:
 
 ```text
-127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com
+127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com
 ```
 
 Kind maps HTTPS to port `8443`, so use that port in local requests. The local certificate is self-signed; `curl -k` skips certificate verification during development.

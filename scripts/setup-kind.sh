@@ -26,10 +26,7 @@ FLUENTD_DOCKERFILE=images/fluentd-loki/Dockerfile
 FLUENTD_BUILD_CONTEXT=images/fluentd-loki
 WEBSITE_ORCHESTRATOR_BUILD_CONTEXT=services/website-orchestrator
 ROLLOUT_TIMEOUT=5m
-GRAFANA_NAMESPACE=observability
-GRAFANA_SERVICE=prometheus-grafana
-GRAFANA_LOCAL_PORT=3000
-GRAFANA_SERVICE_PORT=80
+OBSERVABILITY_UIS="https://grafana.myyotta.com:8443 https://prometheus.myyotta.com:8443 https://alertmanager.myyotta.com:8443"
 NOTIFICATION_WEBHOOK_URL="${NOTIFICATION_WEBHOOK_URL:-}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -78,4 +75,4 @@ printf '%s' "$ORCHESTRATOR_GITHUB_TOKEN" \
 kubectl rollout restart deployment/website-orchestrator --namespace "$PLATFORM_NAMESPACE"
 kubectl rollout status "deployment/$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --namespace "$PLATFORM_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
 echo "Platform is ready. Deploy Day 0 with the Provisioning API GitHub Actions workflow."
-echo "Kind platform is ready on HTTPS port 8443. Run: kubectl port-forward -n $GRAFANA_NAMESPACE svc/$GRAFANA_SERVICE $GRAFANA_LOCAL_PORT:$GRAFANA_SERVICE_PORT"
+echo "Kind platform is ready on HTTPS port 8443. Observability (add the hostnames to /etc/hosts): $OBSERVABILITY_UIS"

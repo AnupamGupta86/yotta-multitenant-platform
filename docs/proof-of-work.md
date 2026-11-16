@@ -59,7 +59,7 @@ Before you start, deploy the platform and the three tenants (`./scripts/setup-lo
 and add the hosts line to `/etc/hosts`:
 
 ```text
-127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com
+127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com
 ```
 
 ---
@@ -218,8 +218,8 @@ with `LAG 0`; orchestrator log lines for "dispatched workflow" and the readable 
 **Show:** Prometheus scrapes cluster and website metrics, Grafana shows them, Fluentd ships logs to Loki.
 
 ```sh
-kubectl port-forward -n observability svc/prometheus-grafana 3000:80                        # Grafana: http://localhost:3000 (admin / password in helm/monitoring/values.yaml)
-kubectl port-forward -n observability svc/prometheus-kube-prometheus-prometheus 9090:9090   # Prometheus: http://localhost:9090
+open https://grafana.myyotta.com:8443      # Grafana (admin / password in helm/monitoring/values.yaml)
+open https://prometheus.myyotta.com:8443   # Prometheus
 ```
 
 **Expect:** dashboard *Yotta Website Platform* with request rate by tenant/endpoint/status, success %,

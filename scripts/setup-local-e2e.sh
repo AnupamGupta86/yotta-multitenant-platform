@@ -10,6 +10,7 @@ DEFAULT_DOMAIN_SUFFIX="${DEFAULT_DOMAIN_SUFFIX:-myyotta.com}"
 CLUSTER_NAME="${CLUSTER_NAME:-yotta-platform}"
 CLUSTER_DELETE_CONFIRMATION="delete ${CLUSTER_NAME}"
 PROVISIONING_HOST="${PROVISIONING_HOST:-provisioning.myyotta.com}"
+OBSERVABILITY_HOSTS=(grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com)
 PROVISIONING_IMAGE="${PROVISIONING_IMAGE:-yotta/website-provisioning:local}"
 WEBSITE_IMAGE="${WEBSITE_IMAGE:-yotta/website-app:local}"
 WEBSITE_ORCHESTRATOR_IMAGE="${WEBSITE_ORCHESTRATOR_IMAGE:-yotta/website-orchestrator:local}"
@@ -160,13 +161,17 @@ done
 
 echo
 echo "End-to-end local setup is ready."
-echo "Provisioning API: https://${PROVISIONING_HOST}:${LOCAL_HTTPS_PORT}"
+echo "Provisioning API: https://${PROVISIONING_HOST}:${LOCAL_HTTPS_PORT}/api/v1  (new website: POST /api/v1/websites)"
 echo "Tenant websites:"
 for domain in "${DOMAINS_TO_DEPLOY[@]}"; do
-  echo "  https://${domain}:${LOCAL_HTTPS_PORT}"
+  echo "  https://${domain}:${LOCAL_HTTPS_PORT}/api/v1"
+done
+echo "Observability (Grafana user admin):"
+for host in "${OBSERVABILITY_HOSTS[@]}"; do
+  echo "  https://${host}:${LOCAL_HTTPS_PORT}"
 done
 
-HOSTS_TO_RESOLVE=("$PROVISIONING_HOST" "${DOMAINS_TO_DEPLOY[@]}")
+HOSTS_TO_RESOLVE=("$PROVISIONING_HOST" "${DOMAINS_TO_DEPLOY[@]}" "${OBSERVABILITY_HOSTS[@]}")
 echo
 echo "For local name resolution, add this line to /etc/hosts if it is not present:"
 printf '%s %s\n' "$LOCAL_HOST_IP" "${HOSTS_TO_RESOLVE[*]}"

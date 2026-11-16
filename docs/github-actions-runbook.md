@@ -157,7 +157,7 @@ flowchart LR
 | 5 | Approval environments | `./scripts/setup-deployment-approvals.sh` (creates all five, you as reviewer, deploys only from `master`, `feature`, `feature/*`) |
 | 6 | Grok key (AIOps only) | `gh secret set GROK_API_KEY --env aiops-deployment`; optional `gh variable set GROK_MODEL --env aiops-deployment --body grok-4` |
 | 6b | E-mail reports (AIOps only) | `gh secret set SMTP_USERNAME`, `SMTP_PASSWORD`, `REPORT_EMAIL_TO` with `--env aiops-deployment`; optional variables `SMTP_HOST` (default `smtp.gmail.com`), `SMTP_PORT` (default `587`). See [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md#e-mail-setup-one-time) |
-| 7 | Local names | `127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com` in `/etc/hosts` |
+| 7 | Local names | `127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com` in `/etc/hosts` |
 
 Check the runner is online: `gh api repos/{owner}/{repo}/actions/runners --jq '.runners[] | [.name,.status,(.labels|map(.name)|join(","))] | @tsv'`
 
@@ -255,7 +255,8 @@ runs `helm upgrade --install … --wait`.
 
 Needs: repository secret `ORCHESTRATOR_GITHUB_TOKEN`. Steps: validate tag → Kind ready → load Fluentd image →
 cluster add-ons (Calico, ingress-nginx, cert-manager, metrics-server) → `platform` release (Kafka, orchestrator,
-Loki, Fluentd, issuer, dashboard) → `prometheus` release (Prometheus + Grafana).
+Loki, Fluentd, issuer, dashboard) → `prometheus` release (Prometheus + Grafana + Alertmanager, each with an Ingress:
+`https://grafana|prometheus|alertmanager.myyotta.com:8443`).
 
 ```sh
 gh workflow run platform_cd.yml --ref master -f image_tag=<tag>
