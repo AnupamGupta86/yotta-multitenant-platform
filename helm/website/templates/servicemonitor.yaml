@@ -14,4 +14,7 @@ spec:
     - port: {{ .Values.service.targetPortName }}
       path: {{ .Values.serviceMonitor.path }}
       interval: {{ .Values.serviceMonitor.interval }}
+      # Keep the app's own labels (endpoint, service, tenant): without this Prometheus overwrites
+      # `endpoint` with the port name ("http") and the per-endpoint dashboard panel shows one line
+      honorLabels: true
 {{- end }}

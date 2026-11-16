@@ -3,18 +3,112 @@
 End-to-end reference for every pipeline in this repository: what triggers it, what it does step by step,
 what it needs, how to run it, and how to fix the usual failures.
 
-- [1. How the pipelines fit together](#1-how-the-pipelines-fit-together)
-- [2. One-time setup](#2-one-time-setup)
-- [3. Shared building blocks](#3-shared-building-blocks)
-- [4. CI pipelines](#4-ci-pipelines)
-- [5. CD pipelines](#5-cd-pipelines)
-- [6. End-to-end run (fresh cluster to working website)](#6-end-to-end-run-fresh-cluster-to-working-website)
-- [7. Day-2 operations](#7-day-2-operations)
-- [8. Troubleshooting](#8-troubleshooting)
+- [1. Framework structure](#1-framework-structure)
+- [2. How the pipelines fit together](#2-how-the-pipelines-fit-together)
+- [3. One-time setup](#3-one-time-setup)
+- [4. Shared building blocks](#4-shared-building-blocks)
+- [5. CI pipelines](#5-ci-pipelines)
+- [6. CD pipelines](#6-cd-pipelines)
+- [7. End-to-end run (fresh cluster to working website)](#7-end-to-end-run-fresh-cluster-to-working-website)
+- [8. Day-2 operations](#8-day-2-operations)
+- [9. Troubleshooting](#9-troubleshooting)
 
 ---
 
-## 1. How the pipelines fit together
+## 1. Framework structure
+
+```text
+yotta-multitenant-platform/
+├── README.md                     Project overview, deliverables map, quick start
+├── VERSION                       Base image version (1.0.0); CI appends the UTC build time
+├── docker-compose.yml            Local dev: PostgreSQL, Kafka, provisioning API, orchestrator (dry-run)
+├── .trivyignore                  Documented image-scan exceptions (one false positive)
+├── .gitignore                    Ignored local files (venv, output/, runner files, .DS_Store)
+│
+├── .github/
+│   ├── pipeline-config.env       Shared non-secret pipeline settings (cluster, namespaces, versions, timeouts)
+│   ├── actionlint.yaml           Tells actionlint about the self-hosted runner labels
+│   ├── scripts/
+│   │   ├── load-pipeline-config.sh     Loads pipeline-config.env into every job
+│   │   ├── validate-image-tag.sh       CD guard: only MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS tags
+│   │   ├── resolve-website-images.sh   Website CD: requested or newest app image, running orchestrator image
+│   │   └── update-orchestrator-token.sh Refreshes the orchestrator's GitHub token Secret in the cluster
+│   └── workflows/
+│       ├── service_ci.yml              Reusable CI: lint, tests, security scans, image build/scan/run, publish
+│       ├── website_app_ci.yml / _cd.yml            Tenant website: build / deploy one tenant (+ rollback demo)
+│       ├── website_provisioning_ci.yml / _cd.yml   Provisioning API: build / deploy
+│       ├── website_orchestrator_ci.yml / _cd.yml   Kafka orchestrator: build + Kafka test / deploy
+│       ├── platform_ci.yml / platform_cd.yml       Charts + Fluentd image / add-ons, platform, monitoring
+│       └── aiops_pod_doctor_ci.yml / _cd.yml       AIOps doctor: build / deploy + negative test
+│
+├── services/                     Application code (one folder = one container image)
+│   ├── website-app/              Tenant website (Flask + gunicorn)
+│   │   ├── src/app.py            Routes: /health/live, /health/ready, /api/v1, /api/v1/workload, /metrics
+│   │   ├── src/server.py         Tenant database check + WSGI entry point (src.server:app)
+│   │   ├── gunicorn.conf.py      Web server settings; waits for the database before serving
+│   │   ├── test/                 Unit tests (Flask test client)
+│   │   ├── Dockerfile            Non-root image with health check
+│   │   └── requirements.txt      flask, gunicorn, psycopg
+│   ├── website-provisioning/     Provisioning API (FastAPI)
+│   │   ├── src/app.py            POST /api/v1/websites: validates tenant + domain, idempotent requests
+│   │   ├── src/server.py         PostgreSQL storage, Kafka producer, uvicorn startup
+│   │   └── test/, Dockerfile, requirements.txt
+│   └── website-orchestrator/     Kafka consumer
+│       ├── src/consumer.py       Consumes website-events; dispatches Website App Deployment; notifications
+│       ├── publish_event.py      Publishes WebsiteCreated / WebsiteDeploymentFailed (Helm test, CD)
+│       └── test/, Dockerfile, requirements.txt
+│
+├── helm/                         Kubernetes resources (everything is deployed with Helm)
+│   ├── website/                  One release per tenant (namespace = tenant)
+│   │   └── templates/            deployment, service, ingress (TLS), postgres (StatefulSet + PVC),
+│   │                             database-secret, hpa, pdb, resourcequota, limitrange, networkpolicy,
+│   │                             servicemonitor, event-publisher-test (Helm test sending WebsiteCreated)
+│   ├── website-provisioning/     Provisioning API + its PostgreSQL + Ingress
+│   ├── platform/                 Shared services
+│   │   ├── templates/            kafka, website-orchestrator, loki, fluentd, cluster-issuer (TLS),
+│   │   │                         dashboard (Grafana ConfigMap), notification-secret (optional webhook)
+│   │   └── files/                fluent.conf (log shipping), website-dashboard.json (Grafana dashboard)
+│   ├── monitoring/               kube-prometheus-stack values, pinned chart version, Fluentd image Dockerfile
+│   └── cluster-addons/           Calico CRDs (copied from the official chart, pinned)
+│
+├── scripts/                      Automation used locally and by the pipelines
+│   ├── e2e-setup.sh              One command: fresh Kind cluster + everything + user1-3
+│   ├── setup-kind.sh             Create/update the cluster, add-ons, monitoring, platform
+│   ├── deploy-cluster-addons.sh  Calico, ingress-nginx, cert-manager, metrics-server (versions in cluster-addons.env)
+│   ├── deploy-platform.sh        Deploy the three sample tenants
+│   ├── deploy-tenant.sh          Deploy one tenant: Helm, HTTPS check, Helm test, automatic rollback
+│   ├── load-image-into-kind.sh   Load only the node's platform of a multi-platform image into Kind
+│   ├── build-version.sh          Image tag 1.0.0-YYYYMMDDHHMMSS
+│   ├── helm-retry.sh             Retry wrapper for transient Helm/network errors
+│   ├── load_test.py              CPU load generator for the HPA demo
+│   ├── verify-deployment.sh      Snapshot of one tenant (resources, HTTPS, events) into output/
+│   ├── collect-proof.sh          Proof-of-work evidence for all five assignment items
+│   └── setup-deployment-approvals.sh  Creates the GitHub approval environments
+│
+├── aiops-pod-doctor/             Extra: explains failing pods with Grok
+│   ├── service/                  Python service (detector, Kubernetes client, Grok client, 5 s loop) + tests
+│   ├── helm/                     Deployment, Service, read-only ServiceAccount/ClusterRole
+│   └── scripts/                  demo-failure.sh (break a pod), wait-for-report.sh + report_to_markdown.py (CD)
+│
+├── kind/cluster.yaml             Kind cluster: nodes, HTTP 8081 / HTTPS 8443 on the Mac
+├── database/init/                Local docker-compose database bootstrap
+├── self-hosted/self-hosted.sh    Downloads (checksum-verified) and registers the Mac runner (label yotta-local-k8s)
+│
+└── docs/
+    ├── github-actions-runbook.md  This document
+    ├── deployment.md             Detailed deployment guide
+    ├── architecture.md           Request flow and what runs where
+    ├── rollback.md               Automatic, CD and manual rollback
+    ├── proof-of-work.md          How to demonstrate each assignment item
+    ├── local-runner.md           Self-hosted runner setup
+    ├── proof/                    Evidence folders written by collect-proof.sh (+ screenshots)
+    ├── logs/                     Log of a full local installation
+    └── history/                  Earlier validation reports
+```
+
+---
+
+## 2. How the pipelines fit together
 
 ```mermaid
 flowchart LR
@@ -51,7 +145,7 @@ flowchart LR
 
 ---
 
-## 2. One-time setup
+## 3. One-time setup
 
 | # | What | How |
 |---|---|---|
@@ -67,7 +161,7 @@ Check the runner is online: `gh api repos/{owner}/{repo}/actions/runners --jq '.
 
 ---
 
-## 3. Shared building blocks
+## 4. Shared building blocks
 
 | File | Used by | Purpose |
 |---|---|---|
@@ -94,9 +188,9 @@ Find a tag from the terminal: `gh run view <ci-run-id> --log | grep -oE '[0-9]+\
 
 ---
 
-## 4. CI pipelines
+## 5. CI pipelines
 
-### 4.1 Service CI (`service_ci.yml`, reusable)
+### 5.1 Service CI (`service_ci.yml`, reusable)
 
 Called by Website App CI, Website Provisioning CI and AIOps Pod Doctor CI with `service`, `image` and optional `path`
 (default `services/<service>`).
@@ -120,7 +214,7 @@ Called by Website App CI, Website Provisioning CI and AIOps Pod Doctor CI with `
 **Job `publish`** (pushes and manual runs only): computes the version, logs in to GHCR, builds
 `linux/amd64,linux/arm64` with provenance and SBOM, pushes all tags, writes the version tag to the run summary.
 
-### 4.2 Website App CI / Website Provisioning CI / AIOps Pod Doctor CI
+### 5.2 Website App CI / Website Provisioning CI / AIOps Pod Doctor CI
 
 1. **`chart-validation`**: `helm lint`, `helm template`, kubeconform schema validation, Trivy misconfiguration scan
    of the rendered chart (AIOps also runs ShellCheck on its scripts).
@@ -132,26 +226,26 @@ Called by Website App CI, Website Provisioning CI and AIOps Pod Doctor CI with `
 | Website Provisioning CI | `services/website-provisioning/**`, `helm/website-provisioning/**`, shared CI files |
 | AIOps Pod Doctor CI | `aiops-pod-doctor/**`, shared CI files |
 
-### 4.3 Website Orchestrator CI (`website_orchestrator_ci.yml`)
+### 5.3 Website Orchestrator CI (`website_orchestrator_ci.yml`)
 
 Self-contained; runs on every push and pull request, on any branch. `validate`: ruff, pytest, Bandit, pip-audit, Gitleaks,
 hadolint, image build, Trivy, and a **Kafka integration check** (real broker: publish a
 `WebsiteProvisioningRequested` event, the orchestrator container in dry-run mode must log that it consumed it). `publish`: multi-platform image to GHCR with the version tag.
 
-### 4.4 Platform CI (`platform_ci.yml`)
+### 5.4 Platform CI (`platform_ci.yml`)
 
 `validate`: renders and schema-checks the platform, monitoring and pinned cluster add-on charts, scans them with
 Trivy, lints/builds/tests/scans the Fluentd image. `publish`: Fluentd image `fluentd-loki:<version>`.
 
 ---
 
-## 5. CD pipelines
+## 6. CD pipelines
 
 Common to all: **(1)** a GitHub-hosted job lints/renders the chart (most CDs), **(2)** the deploy job on the Mac
 **waits for approval**, then validates the tag, checks the cluster, logs in to GHCR, loads the image into Kind and
 runs `helm upgrade --install … --wait`.
 
-### 5.1 Platform Deployment (`platform_cd.yml`)
+### 6.1 Platform Deployment (`platform_cd.yml`)
 
 | Input | Required | Value |
 |---|---|---|
@@ -165,7 +259,7 @@ Loki, Fluentd, issuer, dashboard) → `prometheus` release (Prometheus + Grafana
 gh workflow run platform_cd.yml --ref master -f image_tag=<tag>
 ```
 
-### 5.2 Website Orchestrator Deployment (`website_orchestrator_cd.yml`)
+### 6.2 Website Orchestrator Deployment (`website_orchestrator_cd.yml`)
 
 | Input | Required | Value |
 |---|---|---|
@@ -178,7 +272,7 @@ Upgrades only the orchestrator inside the `platform` release.
 gh workflow run website_orchestrator_cd.yml --ref master -f image_tag=<tag>
 ```
 
-### 5.3 Website Provisioning Deployment (`website_provisioning_cd.yml`)
+### 6.3 Website Provisioning Deployment (`website_provisioning_cd.yml`)
 
 | Input | Required | Value |
 |---|---|---|
@@ -191,7 +285,7 @@ release to exist.
 gh workflow run website_provisioning_cd.yml --ref master -f image_tag=<tag>
 ```
 
-### 5.4 Website App Deployment (`website_app_cd.yml`)
+### 6.4 Website App Deployment (`website_app_cd.yml`)
 
 Started **automatically by the orchestrator** for every accepted website request, or manually.
 
@@ -214,7 +308,7 @@ gh workflow run website_app_cd.yml --ref master -f tenant=user1 -f domain=user1.
 gh workflow run website_app_cd.yml --ref master -f tenant=user1 -f domain=user1.myyotta.com -f simulate_failure=true   # rollback demo
 ```
 
-### 5.5 AIOps Pod Doctor Deployment (`aiops_pod_doctor_cd.yml`)
+### 6.5 AIOps Pod Doctor Deployment (`aiops_pod_doctor_cd.yml`)
 
 | Input | Required | Value |
 |---|---|---|
@@ -237,7 +331,7 @@ the Mac before that. From the terminal: `gh run view <run-id> --web`.
 
 ---
 
-## 6. End-to-end run (fresh cluster to working website)
+## 7. End-to-end run (fresh cluster to working website)
 
 | # | Do | Check |
 |---|---|---|
@@ -259,7 +353,7 @@ gh run list --workflow website_app_cd.yml --limit 3
 
 ---
 
-## 7. Day-2 operations
+## 8. Day-2 operations
 
 | Task | How |
 |---|---|
@@ -274,7 +368,7 @@ gh run list --workflow website_app_cd.yml --limit 3
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|

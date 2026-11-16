@@ -149,7 +149,8 @@ for outcomes (optionally also to `NOTIFICATION_WEBHOOK_URL`). Events share a `co
 - **Metrics:** Prometheus scrapes each tenant's `/metrics` (ServiceMonitor) plus cluster metrics.
 - **Dashboards:** Grafana dashboard *Yotta Website Platform*: request rate per tenant/endpoint/status,
   success %, replicas, CPU, memory, restarts, database readiness.
-  `kubectl port-forward -n observability svc/prometheus-grafana 3000:80` → http://localhost:3000.
+  `kubectl port-forward -n observability svc/prometheus-grafana 3000:80` → http://localhost:3000 (user `admin`);
+  Prometheus: `kubectl port-forward -n observability svc/prometheus-kube-prometheus-prometheus 9090:9090` → http://localhost:9090.
 - **Logs:** Fluentd ships all pod logs to Loki; search them in Grafana → Explore → Loki.
 
 ## CI/CD
