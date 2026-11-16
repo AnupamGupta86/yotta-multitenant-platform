@@ -113,7 +113,7 @@ Helm values: `cronjob.schedule` (default `* * * * *`, every minute), `email.*`, 
 ## Pipelines
 
 * **CI** `aiops_pod_doctor_ci.yml`: chart lint/validation/security scan and ShellCheck, then the shared
-  `service_ci.yml` (ruff, unit tests, Bandit, pip-audit, secret scan, hadolint, image build, Trivy,
+  `reusable-service-ci.yml` (ruff, unit tests, Bandit, pip-audit, secret scan, hadolint, image build, Trivy,
   container health check, publish `ghcr.io/<owner>/aiops-pod-doctor:1.0.0-<timestamp>`).
 * **CD** `aiops_pod_doctor_cd.yml` (manual, approval on `aiops-deployment`): stores the Grok key and the
   e-mail login as Kubernetes Secrets (**fails if either is missing**), deploys the chart into `aiops`, and

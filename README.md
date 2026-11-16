@@ -8,13 +8,13 @@ the request travels through Kafka, and GitHub Actions deploys it with Helm onto 
 
 | Assignment item | Where it is | Proof |
 |---|---|---|
-| Tenants `user1`–`user3` in separate namespaces | `helm/website/` (one Helm release per tenant) | [proof §1](docs/proof-of-work.md#1-multi-tenant-websites-deployed) |
-| HTTPS Ingress per tenant, custom domains without cluster changes | `helm/website/templates/ingress.yaml`, cert-manager issuer in `helm/platform/` | §1 (`user4` via the API) |
-| Probes, requests/limits, network policies | `helm/website/templates/deployment.yaml`, `networkpolicy.yaml` | §1 isolation check |
+| Tenants `user1`–`user3` in separate namespaces | `helm/website-app/` (one Helm release per tenant) | [proof §1](docs/proof-of-work.md#1-multi-tenant-websites-deployed) |
+| HTTPS Ingress per tenant, custom domains without cluster changes | `helm/website-app/templates/ingress.yaml`, cert-manager issuer in `helm/platform/` | §1 (`user4` via the API) |
+| Probes, requests/limits, network policies | `helm/website-app/templates/deployment.yaml`, `networkpolicy.yaml` | §1 isolation check |
 | Sample website in Flask | `services/website-app/` (Flask + gunicorn) | CI unit tests |
-| HPA (CPU + memory), quotas, PDB | `helm/website/templates/hpa.yaml`, `resourcequota.yaml`, `limitrange.yaml`, `pdb.yaml` | [proof §2](docs/proof-of-work.md#2-scaling-under-load) |
-| Load simulation | `scripts/load_test.py` | §2 |
-| CI: build, test, scan, publish images | `.github/workflows/*_ci.yml`, shared `service_ci.yml` | [proof §3](docs/proof-of-work.md#3-cicd-with-rollback-and-events) |
+| HPA (CPU + memory), quotas, PDB | `helm/website-app/templates/hpa.yaml`, `resourcequota.yaml`, `limitrange.yaml`, `pdb.yaml` | [proof §2](docs/proof-of-work.md#2-scaling-under-load) |
+| Load simulation | `scripts/load-test.py` | §2 |
+| CI: build, test, scan, publish images | `.github/workflows/*_ci.yml`, shared `reusable-service-ci.yml` | [proof §3](docs/proof-of-work.md#3-cicd-with-rollback-and-events) |
 | CD with approval, rollback on failure | `.github/workflows/*_cd.yml`, `scripts/deploy-tenant.sh`, [docs/rollback.md](docs/rollback.md) | §3 (`simulate_failure` run) |
 | Multiple branches / users | CI on `master`, `feature`, `feature/**`; tenant and domain are inputs | workflow files |
 | Single-node Kafka, deployment events | `helm/platform/templates/kafka.yaml`, `services/website-orchestrator/` | [proof §4](docs/proof-of-work.md#4-kafka-integration) |
@@ -48,7 +48,7 @@ flowchart LR
 
 | Component | Namespace | Chart / code |
 |---|---|---|
-| Tenant website + PostgreSQL | `<tenant>` | `helm/website`, `services/website-app` |
+| Tenant website + PostgreSQL | `<tenant>` | `helm/website-app`, `services/website-app` |
 | Provisioning API + its PostgreSQL | `platform` | `helm/website-provisioning`, `services/website-provisioning` |
 | Kafka, orchestrator, Fluentd, Loki, dashboard | `platform`, `observability` | `helm/platform`, `services/website-orchestrator` |
 | Prometheus, Grafana | `observability` | `helm/monitoring` (kube-prometheus-stack values) |
@@ -59,8 +59,9 @@ flowchart LR
 
 ```
 services/            website-app (Flask), website-provisioning (FastAPI), website-orchestrator (Kafka consumer)
-helm/                website (per tenant), website-provisioning, platform, monitoring, cluster-addons
-.github/workflows/   one CI and one CD workflow per component, shared service_ci.yml
+helm/                website-app (per tenant), website-provisioning, platform, monitoring, cluster-addons
+images/              fluentd-loki (Fluentd image that ships pod logs to Loki)
+.github/workflows/   one CI and one CD workflow per component, shared reusable-service-ci.yml
 scripts/             local setup, tenant deploy with rollback, load test, evidence collection
 kind/                Kind cluster definition (ports 8080/8443 on the Mac)
 aiops-pod-doctor/    extra: failing-pod analysis with Grok
@@ -74,7 +75,7 @@ docs/                deployment, architecture, rollback, proof of work
 Needs Docker Desktop, Kind, kubectl, Helm 4.x and Python 3.12+ on the Mac.
 
 ```sh
-./scripts/e2e-setup.sh          # Kind cluster, add-ons, monitoring, platform, provisioning API, user1-3
+./scripts/setup-local-e2e.sh          # Kind cluster, add-ons, monitoring, platform, provisioning API, user1-3
 ```
 
 Then add the hosts entry it prints:
@@ -121,7 +122,7 @@ a ResourceQuota and LimitRange, and a PodDisruptionBudget so at least one pod st
 
 ```sh
 kubectl get hpa -n user1 -w
-python3 scripts/load_test.py --tenant user1 --seconds 180 --workers 40
+python3 scripts/load-test.py --tenant user1 --seconds 180 --workers 40
 ```
 
 `/api/v1/workload` is deliberately CPU-heavy, so 40 workers push CPU over 60 % and the HPA scales out.
@@ -157,7 +158,7 @@ for outcomes (optionally also to `NOTIFICATION_WEBHOOK_URL`). Events share a `co
 
 | Workflow | Runs on | Does |
 |---|---|---|
-| `website_app_ci`, `website_provisioning_ci`, `website_orchestrator_ci`, `aiops_pod_doctor_ci` | GitHub-hosted | chart lint + schema + security scan, then `service_ci.yml`: ruff, unit tests, Bandit, pip-audit, Gitleaks, hadolint, image build, Trivy, container health check, publish to GHCR |
+| `website_app_ci`, `website_provisioning_ci`, `website_orchestrator_ci`, `aiops_pod_doctor_ci` | GitHub-hosted | chart lint + schema + security scan, then `reusable-service-ci.yml`: ruff, unit tests, Bandit, pip-audit, Gitleaks, hadolint, image build, Trivy, container health check, publish to GHCR |
 | `platform_ci` | GitHub-hosted | validates add-on, platform and monitoring charts; builds and publishes the Fluentd image |
 | `*_cd` | self-hosted Mac | validate the tag, wait for approval, load the image into Kind, `helm upgrade --install`, verify |
 

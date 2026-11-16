@@ -48,3 +48,11 @@ Published images use a timestamped version such as `1.0.0-20261116010802`: the b
 Every website deployment requests CPU and memory. Its HPA scales on both metrics, within the configured tenant quota. The Python load generator calls the CPU workload endpoint so the HPA can be observed under load. A PodDisruptionBudget protects availability during voluntary updates.
 
 Prometheus Operator scrapes each tenant's ServiceMonitor. Grafana includes website request, replica, and log panels. Fluentd reads container logs, adds Kubernetes metadata, and sends them to Loki.
+
+## Extra: AIOps pod doctor
+
+A CronJob in the `aiops` namespace runs every minute. It finds one newly failing pod anywhere in the cluster,
+collects its status, events and logs (secrets masked), asks Grok (xAI) for the root cause and a fix, and
+e-mails the report, clearly marked as AI-generated. Each failure is reported once (state in a ConfigMap). It
+only reads the cluster and never changes it. The Grok key and the e-mail login are Kubernetes Secrets, mounted
+as files. Details: [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md).

@@ -1,4 +1,4 @@
-"""Generate concurrent website requests to demonstrate HPA scaling; run with python3 scripts/load_test.py [--tenant NAME] [--seconds N] [--workers N]."""
+"""Generate concurrent website requests to demonstrate HPA scaling; run with python3 scripts/load-test.py [--tenant NAME] [--seconds N] [--workers N]."""
 
 import argparse
 import re

@@ -9,7 +9,7 @@ on:
       - '.trivyignore'
       - '.github/workflows/aiops_pod_doctor_ci.yml'
       - '.github/workflows/aiops_pod_doctor_cd.yml'
-      - '.github/workflows/service_ci.yml'
+      - '.github/workflows/reusable-service-ci.yml'
       - '.github/pipeline-config.env'
       - '.github/scripts/**'
   pull_request:
@@ -21,7 +21,7 @@ on:
       - '.trivyignore'
       - '.github/workflows/aiops_pod_doctor_ci.yml'
       - '.github/workflows/aiops_pod_doctor_cd.yml'
-      - '.github/workflows/service_ci.yml'
+      - '.github/workflows/reusable-service-ci.yml'
       - '.github/pipeline-config.env'
       - '.github/scripts/**'
   workflow_dispatch:
@@ -74,7 +74,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: ./.github/workflows/service_ci.yml
+    uses: ./.github/workflows/reusable-service-ci.yml
     with:
       service: aiops-pod-doctor
       image: aiops-pod-doctor

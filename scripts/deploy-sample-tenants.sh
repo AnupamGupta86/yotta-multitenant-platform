@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the website chart for each configured sample tenant; run with ./scripts/deploy-platform.sh after building or publishing the images.
+# Deploy the website chart for each configured sample tenant; run with ./scripts/deploy-sample-tenants.sh after building or publishing the images.
 set -euo pipefail
 
 DEFAULT_WEBSITE_IMAGE=ghcr.io/owner/website-app:latest

@@ -14,7 +14,7 @@ PROVISIONING_IMAGE="${PROVISIONING_IMAGE:-yotta/website-provisioning:local}"
 WEBSITE_IMAGE="${WEBSITE_IMAGE:-yotta/website-app:local}"
 WEBSITE_ORCHESTRATOR_IMAGE="${WEBSITE_ORCHESTRATOR_IMAGE:-yotta/website-orchestrator:local}"
 PROVISIONING_CHART="${PROVISIONING_CHART:-helm/website-provisioning}"
-WEBSITE_CHART="${WEBSITE_CHART:-helm/website}"
+WEBSITE_CHART="${WEBSITE_CHART:-helm/website-app}"
 PROVISIONING_BUILD_CONTEXT="${PROVISIONING_BUILD_CONTEXT:-services/website-provisioning}"
 WEBSITE_BUILD_CONTEXT="${WEBSITE_BUILD_CONTEXT:-services/website-app}"
 PROVISIONING_RELEASE="${PROVISIONING_RELEASE:-website-provisioning}"
@@ -46,7 +46,7 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 cd "$repo_root"
 
 if (($# > 2)); then
-  echo "Usage: ./scripts/e2e-setup.sh [tenant] [domain]" >&2
+  echo "Usage: ./scripts/setup-local-e2e.sh [tenant] [domain]" >&2
   exit 2
 fi
 
@@ -82,6 +82,22 @@ if [[ -z "${ORCHESTRATOR_REPOSITORY:-}" ]]; then
   export ORCHESTRATOR_REPOSITORY
 fi
 
+# The orchestrator needs a GitHub token to start the Website App Deployment workflow.
+# GitHub never returns the value of a repository secret, so the token is taken, in this order, from:
+#   1. ORCHESTRATOR_GITHUB_TOKEN, if already set;
+#   2. the GitHub CLI login on this Mac (`gh auth token`), if it can reach this repository's workflows;
+#   3. a prompt.
+if [[ -z "${ORCHESTRATOR_GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+  gh_token="$(gh auth token 2>/dev/null || true)"
+  if [[ -n "$gh_token" ]] && GH_TOKEN="$gh_token" gh api "repos/$ORCHESTRATOR_REPOSITORY/actions/workflows" --silent 2>/dev/null; then
+    echo "Using your GitHub CLI login (gh auth token) as the orchestrator's GitHub token"
+    ORCHESTRATOR_GITHUB_TOKEN="$gh_token"
+    export ORCHESTRATOR_GITHUB_TOKEN
+  else
+    echo "GitHub CLI login cannot reach $ORCHESTRATOR_REPOSITORY workflows; asking for a token instead" >&2
+  fi
+  unset gh_token
+fi
 if [[ -z "${ORCHESTRATOR_GITHUB_TOKEN:-}" ]]; then
   if [[ ! -t 0 ]]; then
     echo "Set ORCHESTRATOR_GITHUB_TOKEN to a fine-grained token with Actions read/write access" >&2

@@ -4,7 +4,7 @@ set -euo pipefail
 
 DEFAULT_ORCHESTRATOR_IMAGE=yotta/website-orchestrator:local
 DEFAULT_CLUSTER_NAME=yotta-platform
-TENANT_CHART=helm/website
+TENANT_CHART=helm/website-app
 HEALTH_PATH=/health/ready
 LOCAL_HTTPS_PORT=8443
 LOCAL_HOST_IP=127.0.0.1

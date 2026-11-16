@@ -7,7 +7,7 @@
 #   website-orchestrator-deployment   website_orchestrator_cd.yml
 #   website-provisioning-deployment   website_provisioning_cd.yml
 #   website-app-deployment            website_app_cd.yml            (one run per tenant website)
-#   aiops-deployment                  aiops_pod_doctor_cd.yml       (also holds the GROK_API_KEY secret)
+#   aiops-deployment                  aiops_pod_doctor_cd.yml       (also holds GROK_API_KEY and the SMTP_* / REPORT_EMAIL_TO secrets)
 #
 # Deployments are only allowed from master, feature and feature/* (the same branches the CD jobs accept).
 # Safe to run again: it updates the environments in place.

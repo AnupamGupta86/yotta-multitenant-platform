@@ -6,6 +6,7 @@ on:
     paths:
       - 'helm/platform/**'
       - 'helm/monitoring/**'
+      - 'images/fluentd-loki/**'
       - 'helm/cluster-addons/**'
       - 'kind/**'
       - 'scripts/setup-kind.sh'
@@ -23,6 +24,7 @@ on:
     paths:
       - 'helm/platform/**'
       - 'helm/monitoring/**'
+      - 'images/fluentd-loki/**'
       - 'helm/cluster-addons/**'
       - 'kind/**'
       - 'scripts/setup-kind.sh'
@@ -130,19 +132,19 @@ jobs:
         with:
           scan-type: config
           scan-ref: /tmp/rendered-monitoring
-          trivyignores: helm/monitoring/trivyignore
+          trivyignores: helm/monitoring/.trivyignore
           format: table
           exit-code: '1'
           severity: CRITICAL,HIGH
       - name: Lint Fluentd Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: helm/monitoring/fluentd/Dockerfile
+          dockerfile: images/fluentd-loki/Dockerfile
       - uses: docker/setup-buildx-action@v4
       - name: Build Fluentd image for validation
         uses: docker/build-push-action@v7
         with:
-          context: helm/monitoring/fluentd
+          context: images/fluentd-loki
           load: true
           tags: local/yotta/${{ steps.pipeline.outputs.fluentd_image_name }}:${{ github.sha }}
       - name: Validate Fluentd image and mounted configuration
@@ -195,7 +197,7 @@ jobs:
       - name: Publish Fluentd image
         uses: docker/build-push-action@v7
         with:
-          context: helm/monitoring/fluentd
+          context: images/fluentd-loki
           platforms: ${{ steps.pipeline.outputs.image_build_platforms }}
           push: true
           tags: |

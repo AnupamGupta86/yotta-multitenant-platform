@@ -25,7 +25,7 @@ All screenshots live in [`docs/proof/screenshots/`](proof/screenshots/). ✅ = c
 | 02 | `02-pods-all-namespaces.png` | 1 Multi-tenant | all pods Running; 2 app replicas + PostgreSQL per tenant | `kubectl get pod -A` | ✅ |
 | 03 | `03-https-health-checks.png` | 1 Multi-tenant | HTTPS via Ingress, readiness incl. tenant database | `curl -k https://user1.myyotta.com:8443/health/ready` | ✅ |
 | 03b | `03b-tenants-browser.png` | 1 Multi-tenant | user1, user2, user3 in three browser tabs (optional) | `https://userN.myyotta.com:8443/api/v1` | ⏳ |
-| 04 | `04-hpa-scaling.png` | 2 Scaling | HPA scale-out starts under load (2 → 6) | `kubectl get hpa -n user1 -w` + `scripts/load_test.py` | ✅ |
+| 04 | `04-hpa-scaling.png` | 2 Scaling | HPA scale-out starts under load (2 → 6) | `kubectl get hpa -n user1 -w` + `scripts/load-test.py` | ✅ |
 | 05 | `05-hpa-scale-out-and-in.png` | 2 Scaling | full cycle 2 → 8 → 4; 22,585 requests, 0 failed | same | ✅ |
 | 06 | `06-grafana-request-rate.png` | 2 Scaling | request rate, HTTP 200 only, 100 % success during the load | Grafana dashboard | ✅ |
 | 06b | `06b-grafana-replicas-cpu.png` | 2 Scaling | panels "Website replicas" and "Website CPU usage by tenant" (optional) | Grafana dashboard, scroll down | ⏳ |
@@ -52,10 +52,10 @@ All screenshots live in [`docs/proof/screenshots/`](proof/screenshots/). ✅ = c
 | 19 | `19-loki-logs.png` | 5 Observability | tenant application logs in Loki | Grafana → Explore → Loki: `{namespace="user1"}` | ⏳ |
 | 30 | `30-aiops-ci-pipeline.png` | Extra AIOps | AIOps CI stages | a green AIOps CI run | ✅ |
 | 31 | `31-aiops-ci-image-tag.png` | Extra AIOps | deployable AIOps image tag | CI run summary | ✅ |
-| 32 | `32-aiops-cd-report.png` | Extra AIOps | CD with negative test; report in the summary | AIOps Pod Doctor Deployment run | ✅ |
-| 33 | `33-aiops-report-detail.png` | Extra AIOps | Grok's root cause, evidence, workaround, permanent fix | same run, scroll to the report text | ⏳ |
+| 32 | `32-aiops-cd-report.png` | Extra AIOps | CD run with its report in the summary (first version, with a demo pod) | AIOps Pod Doctor Deployment run | ✅ |
+| 33 | `33-aiops-email-report.png` | Extra AIOps | the e-mailed RCA report with its AI-generated marker | your inbox, after breaking one of your apps | ⏳ |
 
-Before you start, deploy the platform and the three tenants (`./scripts/e2e-setup.sh`, or the CD workflows),
+Before you start, deploy the platform and the three tenants (`./scripts/setup-local-e2e.sh`, or the CD workflows),
 and add the hosts line to `/etc/hosts`:
 
 ```text
@@ -110,7 +110,7 @@ Still to add: browser tabs for the three tenants; the `user4` request and its CD
 
 ```sh
 kubectl get hpa -n user1 -w                                     # terminal 1
-python3 scripts/load_test.py --tenant user1 --seconds 180 --workers 40   # terminal 2
+python3 scripts/load-test.py --tenant user1 --seconds 180 --workers 40   # terminal 2
 ```
 
 **Expect:** `REPLICAS` goes from 2 towards 8 (the chart's `maxReplicas`) while `cpu: x%/60%` is above
@@ -119,7 +119,7 @@ target; `kubectl describe hpa -n user1` lists `SuccessfulRescale` events. In `2-
 
 **Screenshots**
 
-*HPA scaling out under load*: right, `scripts/load_test.py` sends CPU-heavy requests to user1 (40 workers, 180 s);
+*HPA scaling out under load*: right, `scripts/load-test.py` sends CPU-heavy requests to user1 (40 workers, 180 s);
 left, `kubectl get hpa -n user1 -w`. Idle at `cpu: 3–5%/60%` with 2 replicas; under load CPU jumps to 181 % and then
 892 % of the request, and the HPA raises user1 from **2 to 6 replicas** within about a minute.
 
@@ -167,7 +167,7 @@ The run's artifact `website-deployment-evidence-<run id>` contains `user1-helm-h
 
 **Screenshots**
 
-*All pipelines in one place*: one CI and one CD workflow per component plus the shared Service CI; recent runs
+*All pipelines in one place*: one CI and one CD workflow per component plus the shared Reusable Service CI; recent runs
 on `master` are green (pushes run CI, CD runs are started manually).
 
 ![All workflows](proof/screenshots/07-actions-all-workflows.png)
@@ -261,4 +261,4 @@ which writes the deployable tag (`1.0.0-20261116041814`).
 
 ![AIOps CD and report](proof/screenshots/32-aiops-cd-report.png)
 
-Still to add: the full report text below that table (Root cause, Evidence, Workaround now, Permanent fix).
+Still to add: the e-mailed report (subject `[AIOps][AI-generated] …`) received after breaking one of your apps.

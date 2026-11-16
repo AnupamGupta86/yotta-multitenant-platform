@@ -77,7 +77,7 @@ except OSError as error:
   run "HPA before load" kubectl get hpa -n "$LOAD_TENANT"
   if (( LOAD_SECONDS > 0 )); then
     echo; echo "### Load test: $LOAD_WORKERS workers for ${LOAD_SECONDS}s on $LOAD_TENANT (HPA sampled every 15 s)"
-    python3 scripts/load_test.py --tenant "$LOAD_TENANT" --seconds "$LOAD_SECONDS" --workers "$LOAD_WORKERS" > "$out/load-test-output.txt" 2>&1 &
+    python3 scripts/load-test.py --tenant "$LOAD_TENANT" --seconds "$LOAD_SECONDS" --workers "$LOAD_WORKERS" > "$out/load-test-output.txt" 2>&1 &
     load_pid=$!
     while kill -0 "$load_pid" 2>/dev/null; do
       echo "--- $(date -u +%H:%M:%S)"

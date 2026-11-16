@@ -34,12 +34,12 @@ yotta-multitenant-platform/
 │   │   ├── resolve-website-images.sh   Website CD: requested or newest app image, running orchestrator image
 │   │   └── update-orchestrator-token.sh Refreshes the orchestrator's GitHub token Secret in the cluster
 │   └── workflows/
-│       ├── service_ci.yml              Reusable CI: lint, tests, security scans, image build/scan/run, publish
+│       ├── reusable-service-ci.yml  Reusable CI: lint, tests, security scans, image build/scan/run, publish
 │       ├── website_app_ci.yml / _cd.yml            Tenant website: build / deploy one tenant (+ rollback demo)
 │       ├── website_provisioning_ci.yml / _cd.yml   Provisioning API: build / deploy
 │       ├── website_orchestrator_ci.yml / _cd.yml   Kafka orchestrator: build + Kafka test / deploy
 │       ├── platform_ci.yml / platform_cd.yml       Charts + Fluentd image / add-ons, platform, monitoring
-│       └── aiops_pod_doctor_ci.yml / _cd.yml       AIOps doctor: build / deploy + negative test
+│       └── aiops_pod_doctor_ci.yml / _cd.yml       AIOps doctor: build / deploy the CronJob + one report run
 │
 ├── services/                     Application code (one folder = one container image)
 │   ├── website-app/              Tenant website (Flask + gunicorn)
@@ -59,7 +59,7 @@ yotta-multitenant-platform/
 │       └── test/, Dockerfile, requirements.txt
 │
 ├── helm/                         Kubernetes resources (everything is deployed with Helm)
-│   ├── website/                  One release per tenant (namespace = tenant)
+│   ├── website-app/              One release per tenant (namespace = tenant)
 │   │   └── templates/            deployment, service, ingress (TLS), postgres (StatefulSet + PVC),
 │   │                             database-secret, hpa, pdb, resourcequota, limitrange, networkpolicy,
 │   │                             servicemonitor, event-publisher-test (Helm test sending WebsiteCreated)
@@ -68,19 +68,22 @@ yotta-multitenant-platform/
 │   │   ├── templates/            kafka, website-orchestrator, loki, fluentd, cluster-issuer (TLS),
 │   │   │                         dashboard (Grafana ConfigMap), notification-secret (optional webhook)
 │   │   └── files/                fluent.conf (log shipping), website-dashboard.json (Grafana dashboard)
-│   ├── monitoring/               kube-prometheus-stack values, pinned chart version, Fluentd image Dockerfile
+│   ├── monitoring/               kube-prometheus-stack values, pinned chart version, .trivyignore
 │   └── cluster-addons/           Calico CRDs (copied from the official chart, pinned)
 │
+├── images/
+│   └── fluentd-loki/Dockerfile   Fluentd image that ships pod logs to Loki (built by Platform CI)
+│
 ├── scripts/                      Automation used locally and by the pipelines
-│   ├── e2e-setup.sh              One command: fresh Kind cluster + everything + user1-3
+│   ├── setup-local-e2e.sh        One command: fresh Kind cluster + everything + user1-3
 │   ├── setup-kind.sh             Create/update the cluster, add-ons, monitoring, platform
 │   ├── deploy-cluster-addons.sh  Calico, ingress-nginx, cert-manager, metrics-server (versions in cluster-addons.env)
-│   ├── deploy-platform.sh        Deploy the three sample tenants
+│   ├── deploy-sample-tenants.sh  Deploy the website chart for the sample tenants user1-user3
 │   ├── deploy-tenant.sh          Deploy one tenant: Helm, HTTPS check, Helm test, automatic rollback
 │   ├── load-image-into-kind.sh   Load only the node's platform of a multi-platform image into Kind
 │   ├── build-version.sh          Image tag 1.0.0-YYYYMMDDHHMMSS
 │   ├── helm-retry.sh             Retry wrapper for transient Helm/network errors
-│   ├── load_test.py              CPU load generator for the HPA demo
+│   ├── load-test.py              CPU load generator for the HPA demo
 │   ├── collect-proof.sh          Proof-of-work evidence for all five assignment items
 │   └── setup-deployment-approvals.sh  Creates the GitHub approval environments
 │
@@ -130,7 +133,7 @@ flowchart LR
 | Provisioning API (FastAPI) | `website_provisioning_ci.yml` | `website_provisioning_cd.yml` | `website-provisioning-deployment` |
 | Tenant website (Flask) | `website_app_ci.yml` | `website_app_cd.yml` | `website-app-deployment` |
 | AIOps pod doctor | `aiops_pod_doctor_ci.yml` | `aiops_pod_doctor_cd.yml` | `aiops-deployment` |
-| *(shared)* | `service_ci.yml` (reusable) | | |
+| *(shared)* | `reusable-service-ci.yml` (reusable) | | |
 
 **Rules that apply to all of them**
 
@@ -148,7 +151,7 @@ flowchart LR
 | # | What | How |
 |---|---|---|
 | 1 | Tools on the Mac | Docker Desktop, Kind, kubectl, Helm 4.x, Python 3.9+ (`python3`), GitHub CLI `gh` |
-| 2 | Kind cluster | `./scripts/setup-kind.sh` (or `./scripts/e2e-setup.sh` for everything) |
+| 2 | Kind cluster | `./scripts/setup-kind.sh` (or `./scripts/setup-local-e2e.sh` for everything) |
 | 3 | Self-hosted runner | Settings → Actions → Runners → *New self-hosted runner* (macOS), label **`yotta-local-k8s`**; keep `./run.sh` running. Details: [local-runner.md](local-runner.md) |
 | 4 | Repository secret `ORCHESTRATOR_GITHUB_TOKEN` | Fine-grained PAT for this repo with **Actions: Read and write**: `gh secret set ORCHESTRATOR_GITHUB_TOKEN` |
 | 5 | Approval environments | `./scripts/setup-deployment-approvals.sh` (creates all five, you as reviewer, deploys only from `master`, `feature`, `feature/*`) |
@@ -189,7 +192,7 @@ Find a tag from the terminal: `gh run view <ci-run-id> --log | grep -oE '[0-9]+\
 
 ## 5. CI pipelines
 
-### 5.1 Service CI (`service_ci.yml`, reusable)
+### 5.1 Reusable Service CI (`reusable-service-ci.yml`)
 
 Called by Website App CI, Website Provisioning CI and AIOps Pod Doctor CI with `service`, `image` and optional `path`
 (default `services/<service>`).
@@ -217,11 +220,11 @@ Called by Website App CI, Website Provisioning CI and AIOps Pod Doctor CI with `
 
 1. **`chart-validation`**: `helm lint`, `helm template`, kubeconform schema validation, Trivy misconfiguration scan
    of the rendered chart (AIOps also runs ShellCheck on its scripts).
-2. **Service CI** (above) for the service image.
+2. **Reusable Service CI** (above) for the service image.
 
 | Workflow | Triggers on changes to |
 |---|---|
-| Website App CI | `services/website-app/**`, `helm/website/**`, shared CI files |
+| Website App CI | `services/website-app/**`, `helm/website-app/**`, shared CI files |
 | Website Provisioning CI | `services/website-provisioning/**`, `helm/website-provisioning/**`, shared CI files |
 | AIOps Pod Doctor CI | `aiops-pod-doctor/**`, shared CI files |
 
@@ -341,7 +344,7 @@ the Mac before that. From the terminal: `gh run view <run-id> --web`.
 | 5 | `website_provisioning_cd.yml` with its tag, approve | `curl -k https://provisioning.myyotta.com:8443/health/ready` |
 | 6 | Request a website (below) | a *Website App Deployment* run appears; approve it |
 | 7 | Open the website | `curl -k https://user4.myyotta.com:8443/api/v1` |
-| 8 | Optional: `aiops_pod_doctor_cd.yml` | Grok report in the run summary |
+| 8 | Optional: `aiops_pod_doctor_cd.yml` | report in the run summary; e-mail for any failing pod |
 
 ```sh
 curl -k -i -X POST https://provisioning.myyotta.com:8443/api/v1/websites \
@@ -361,6 +364,7 @@ gh run list --workflow website_app_cd.yml --limit 3
 | Change the version number | edit `VERSION` (e.g. `1.1.0`); next builds are `1.1.0-<timestamp>` |
 | Rotate the orchestrator token | `gh secret set ORCHESTRATOR_GITHUB_TOKEN`, then re-run `website_orchestrator_cd.yml` |
 | Rotate the Grok key | `gh secret set GROK_API_KEY --env aiops-deployment`, then re-run `aiops_pod_doctor_cd.yml` |
+| Change the e-mail login or recipients | `gh secret set SMTP_USERNAME` / `SMTP_PASSWORD` / `REPORT_EMAIL_TO --env aiops-deployment`, then re-run `aiops_pod_doctor_cd.yml` |
 | Add a reviewer | `./scripts/setup-deployment-approvals.sh <login> [<login>...]` |
 | See what is deployed | `helm list -A`; `kubectl get deploy -A -o wide` |
 | Collect proof of work | `./scripts/collect-proof.sh` ([proof-of-work.md](proof-of-work.md)) |
@@ -378,6 +382,10 @@ gh run list --workflow website_app_cd.yml --limit 3
 | `content digest ... not found` loading into Kind | multi-platform image | already handled by `load-image-into-kind.sh`; make sure the run uses the current workflow |
 | `Add the repository secret ORCHESTRATOR_GITHUB_TOKEN` | secret missing | `gh secret set ORCHESTRATOR_GITHUB_TOKEN` (fine-grained, Actions read/write) |
 | `Missing GROK_API_KEY` | secret missing on the environment | `gh secret set GROK_API_KEY --env aiops-deployment` |
+| `E-mail not configured` | `SMTP_USERNAME`, `SMTP_PASSWORD` or `REPORT_EMAIL_TO` missing on `aiops-deployment` | set them; see [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md#e-mail-setup-one-time) |
+| AIOps report run times out | the report job's pod never started | the run log shows the pod's events (image pull, volumes, scheduling); `kubectl get jobs,pods -n aiops` |
+| Report e-mail bounces | invalid recipient, e.g. curly quotes typed into `--body “…”` | set `REPORT_EMAIL_TO` again with straight quotes, re-run the AIOps CD |
+| Gmail login fails (`535`) | normal password used, or 2-Step Verification off | use a Gmail **App password** for `SMTP_PASSWORD` |
 | `HTTP 404` from `gh secret set --env` | environment does not exist | `./scripts/setup-deployment-approvals.sh` |
 | Website request accepted but no deployment run | orchestrator token missing/expired, or orchestrator down | `kubectl logs -n platform deploy/website-orchestrator` |
 | Website App Deployment red with rollback | rollout, HTTPS check or Helm test failed | read the run log and the evidence artifact; tenant stays on the previous revision |
