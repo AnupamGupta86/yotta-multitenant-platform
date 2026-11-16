@@ -65,10 +65,8 @@ jobs:
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           echo "IMAGE=$CONTAINER_REGISTRY/$owner/$WEBSITE_PROVISIONING_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
-      - name: Pull and load the selected app image
-        run: |
-          docker pull "$IMAGE"
-          kind load docker-image "$IMAGE" --name "$KIND_CLUSTER_NAME"
+      - name: Load the selected app image into Kind (nodes' platform only)
+        run: ./scripts/load-image-into-kind.sh "$IMAGE" "$KIND_CLUSTER_NAME"
       - name: Install or upgrade the Day 0 release through Helm
         run: |
           helm upgrade --install "$WEBSITE_PROVISIONING_IMAGE" helm/website-provisioning \

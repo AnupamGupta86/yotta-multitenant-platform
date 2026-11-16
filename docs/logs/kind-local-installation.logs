@@ -1,0 +1,575 @@
+ashagupta@Ashas-MacBook-Air scripts % cat e2e-setup.sh 
+#!/usr/bin/env bash
+# Recreate the local Kind cluster and install the platform, Provisioning API, and assignment tenants user1-user3; pass [tenant] [domain] to install one custom tenant.
+set -euo pipefail
+
+# Configuration defaults. Override image/host defaults with environment variables,
+# or pass a tenant and optional domain to install one tenant instead of the samples.
+DEFAULT_TENANT="${DEFAULT_TENANT:-}"
+DEFAULT_TENANTS=(user1 user2 user3)
+DEFAULT_DOMAIN_SUFFIX="${DEFAULT_DOMAIN_SUFFIX:-myyotta.com}"
+CLUSTER_NAME="${CLUSTER_NAME:-yotta-platform}"
+CLUSTER_DELETE_CONFIRMATION="delete ${CLUSTER_NAME}"
+PROVISIONING_HOST="${PROVISIONING_HOST:-provisioning.myyotta.com}"
+PROVISIONING_IMAGE="${PROVISIONING_IMAGE:-yotta/website-provisioning:local}"
+WEBSITE_IMAGE="${WEBSITE_IMAGE:-yotta/website-app:local}"
+WEBSITE_ORCHESTRATOR_IMAGE="${WEBSITE_ORCHESTRATOR_IMAGE:-yotta/website-orchestrator:local}"
+PROVISIONING_CHART="${PROVISIONING_CHART:-helm/website-provisioning}"
+WEBSITE_CHART="${WEBSITE_CHART:-helm/website}"
+PROVISIONING_BUILD_CONTEXT="${PROVISIONING_BUILD_CONTEXT:-services/website-provisioning}"
+WEBSITE_BUILD_CONTEXT="${WEBSITE_BUILD_CONTEXT:-services/website-app}"
+PROVISIONING_RELEASE="${PROVISIONING_RELEASE:-website-provisioning}"
+PLATFORM_NAMESPACE="${PLATFORM_NAMESPACE:-platform}"
+PROVISIONING_DEPLOYMENT="${PROVISIONING_DEPLOYMENT:-website-provisioning}"
+PROVISIONING_ROLLOUT_TIMEOUT="${PROVISIONING_ROLLOUT_TIMEOUT:-5m}"
+PROVISIONING_HELM_TIMEOUT="${PROVISIONING_HELM_TIMEOUT:-10m}"
+LOCAL_HTTPS_PORT="${LOCAL_HTTPS_PORT:-8443}"
+LOCAL_HOST_IP="${LOCAL_HOST_IP:-127.0.0.1}"
+REQUIRED_TOOLS=(docker kind kubectl helm curl)
+SETUP_KIND_SCRIPT="./scripts/setup-kind.sh"
+DEPLOY_TENANT_SCRIPT="./scripts/deploy-tenant.sh"
+TENANTS_TO_DEPLOY=()
+DOMAINS_TO_DEPLOY=()
+HOSTS_TO_RESOLVE=()
+script_dir=""
+repo_root=""
+remote=""
+tenant=""
+domain=""
+tool=""
+tenant_index=0
+typed_confirmation=""
+provisioning_tag=""
+provisioning_repository=""
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+cd "$repo_root"
+
+if (($# > 2)); then
+  echo "Usage: ./scripts/e2e-setup.sh [tenant] [domain]" >&2
+  exit 2
+fi
+
+if [[ -n "${1:-}" ]]; then
+  tenant="$1"
+  domain="${2:-${tenant}.${DEFAULT_DOMAIN_SUFFIX}}"
+  TENANTS_TO_DEPLOY=("$tenant")
+  DOMAINS_TO_DEPLOY=("$domain")
+elif [[ -n "$DEFAULT_TENANT" ]]; then
+  tenant="$DEFAULT_TENANT"
+  domain="${tenant}.${DEFAULT_DOMAIN_SUFFIX}"
+  TENANTS_TO_DEPLOY=("$tenant")
+  DOMAINS_TO_DEPLOY=("$domain")
+else
+  TENANTS_TO_DEPLOY=("${DEFAULT_TENANTS[@]}")
+  for tenant in "${TENANTS_TO_DEPLOY[@]}"; do
+    DOMAINS_TO_DEPLOY+=("${tenant}.${DEFAULT_DOMAIN_SUFFIX}")
+  done
+fi
+
+for tool in "${REQUIRED_TOOLS[@]}"; do
+  command -v "$tool" >/dev/null || { echo "Install $tool and retry" >&2; exit 1; }
+done
+docker info >/dev/null 2>&1 || { echo "Start Docker Desktop before setup" >&2; exit 1; }
+
+if [[ -z "${ORCHESTRATOR_REPOSITORY:-}" ]]; then
+  remote="$(git remote get-url origin 2>/dev/null || true)"
+  ORCHESTRATOR_REPOSITORY="$(printf '%s' "$remote" | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##')"
+  if [[ -z "$ORCHESTRATOR_REPOSITORY" || "$ORCHESTRATOR_REPOSITORY" == "$remote" ]]; then
+    echo "Set ORCHESTRATOR_REPOSITORY to owner/repository" >&2
+    exit 2
+  fi
+  export ORCHESTRATOR_REPOSITORY
+fi
+
+if [[ -z "${ORCHESTRATOR_GITHUB_TOKEN:-}" ]]; then
+  if [[ ! -t 0 ]]; then
+    echo "Set ORCHESTRATOR_GITHUB_TOKEN to a fine-grained token with Actions read/write access" >&2
+    exit 2
+  fi
+  read -r -s -p "GitHub fine-grained token (Actions: read/write): " ORCHESTRATOR_GITHUB_TOKEN
+  printf '\n'
+  [[ -n "$ORCHESTRATOR_GITHUB_TOKEN" ]] || { echo "A GitHub token is required" >&2; exit 2; }
+  export ORCHESTRATOR_GITHUB_TOKEN
+fi
+trap 'unset ORCHESTRATOR_GITHUB_TOKEN' EXIT
+
+echo "Checking chart definitions..."
+helm lint "$PROVISIONING_CHART"
+helm lint "$WEBSITE_CHART"
+
+if kind get clusters | grep -qx "$CLUSTER_NAME"; then
+  echo "WARNING: deleting Kind cluster $CLUSTER_NAME permanently removes its workloads and stored demo data."
+  if [[ ! -t 0 ]]; then
+    echo "Refusing to delete a cluster without an interactive confirmation. Run this script in a terminal and type: $CLUSTER_DELETE_CONFIRMATION" >&2
+    exit 2
+  fi
+  read -r -p "Type '$CLUSTER_DELETE_CONFIRMATION' to continue: " typed_confirmation
+  if [[ "$typed_confirmation" != "$CLUSTER_DELETE_CONFIRMATION" ]]; then
+    echo "Confirmation did not match; leaving cluster $CLUSTER_NAME untouched." >&2
+    exit 2
+  fi
+  echo "Deleting confirmed Kind cluster $CLUSTER_NAME..."
+  kind delete cluster --name "$CLUSTER_NAME"
+fi
+
+echo "Creating a fresh Kind cluster and installing add-ons, monitoring, and platform..."
+CLUSTER_NAME="$CLUSTER_NAME" "$SETUP_KIND_SCRIPT"
+
+echo "Building and loading the local Provisioning API image..."
+docker build -t "$PROVISIONING_IMAGE" "$PROVISIONING_BUILD_CONTEXT"
+kind load docker-image "$PROVISIONING_IMAGE" --name "$CLUSTER_NAME"
+
+provisioning_tag="${PROVISIONING_IMAGE##*:}"
+provisioning_repository="${PROVISIONING_IMAGE%:*}"
+helm upgrade --install "$PROVISIONING_RELEASE" "$PROVISIONING_CHART" \
+  --namespace "$PLATFORM_NAMESPACE" --create-namespace \
+  --set-string "image.repository=$provisioning_repository" \
+  --set-string "image.tag=$provisioning_tag" \
+  --set-string "ingress.host=$PROVISIONING_HOST" \
+  --wait --timeout "$PROVISIONING_HELM_TIMEOUT"
+kubectl rollout status "deployment/$PROVISIONING_DEPLOYMENT" \
+  --namespace "$PLATFORM_NAMESPACE" --timeout="$PROVISIONING_ROLLOUT_TIMEOUT"
+
+echo "Building and loading the local Website image..."
+docker build -t "$WEBSITE_IMAGE" "$WEBSITE_BUILD_CONTEXT"
+kind load docker-image "$WEBSITE_IMAGE" --name "$CLUSTER_NAME"
+
+for tenant_index in "${!TENANTS_TO_DEPLOY[@]}"; do
+  tenant="${TENANTS_TO_DEPLOY[$tenant_index]}"
+  domain="${DOMAINS_TO_DEPLOY[$tenant_index]}"
+  echo "Deploying tenant $tenant ($domain)..."
+  PULL_IMAGE=false "$DEPLOY_TENANT_SCRIPT" "$tenant" "$domain" "$WEBSITE_IMAGE" "$WEBSITE_ORCHESTRATOR_IMAGE"
+done
+
+echo
+echo "End-to-end local setup is ready."
+echo "Provisioning API: https://${PROVISIONING_HOST}:${LOCAL_HTTPS_PORT}"
+echo "Tenant websites:"
+for domain in "${DOMAINS_TO_DEPLOY[@]}"; do
+  echo "  https://${domain}:${LOCAL_HTTPS_PORT}"
+done
+
+HOSTS_TO_RESOLVE=("$PROVISIONING_HOST" "${DOMAINS_TO_DEPLOY[@]}")
+echo
+echo "For local name resolution, add this line to /etc/hosts if it is not present:"
+printf '%s %s\n' "$LOCAL_HOST_IP" "${HOSTS_TO_RESOLVE[*]}"
+ashagupta@Ashas-MacBook-Air scripts % 
+ashagupta@Ashas-MacBook-Air scripts % 
+ashagupta@Ashas-MacBook-Air scripts % 
+ashagupta@Ashas-MacBook-Air scripts % 
+ashagupta@Ashas-MacBook-Air scripts % ./e2e-setup.sh 
+Checking chart definitions...
+==> Linting helm/website-provisioning
+[INFO] Chart.yaml: icon is recommended
+
+1 chart(s) linted, 0 chart(s) failed
+==> Linting helm/website
+[INFO] Chart.yaml: icon is recommended
+
+1 chart(s) linted, 0 chart(s) failed
+WARNING: deleting Kind cluster yotta-platform permanently removes its workloads and stored demo data.
+Type 'delete yotta-platform' to continue: delete yotta-platform
+Deleting confirmed Kind cluster yotta-platform...
+Deleting cluster "yotta-platform" ...
+Deleted nodes: ["yotta-platform-control-plane" "yotta-platform-worker"]
+Creating a fresh Kind cluster and installing add-ons, monitoring, and platform...
+No kind clusters found.
+Creating cluster "yotta-platform" ...
+ ✓ Ensuring node image (kindest/node:v1.35.0) 🖼️
+ ✓ Preparing nodes 📦 📦  
+ ✓ Writing configuration 📜 
+ ✓ Starting control-plane 🕹️ 
+ ✓ Installing StorageClass 💾 
+ ✓ Joining worker nodes 🚜 
+Set kubectl context to "kind-yotta-platform"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-yotta-platform
+
+Not sure what to do next? 😅  Check out https://kind.sigs.k8s.io/docs/user/quick-start/
+Kubernetes control plane is running at https://127.0.0.1:59506
+CoreDNS is running at https://127.0.0.1:59506/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+
+To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
+"projectcalico" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "projectcalico" chart repository
+Update Complete. ⎈Happy Helming!⎈
+Release "calico-crds" does not exist. Installing it now.
+NAME: calico-crds
+LAST DEPLOYED: Mon Nov 16 05:54:22 2026
+NAMESPACE: tigera-operator
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+Release "calico" does not exist. Installing it now.
+NAME: calico
+LAST DEPLOYED: Mon Nov 16 05:54:22 2026
+NAMESPACE: tigera-operator
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+Waiting for daemon set "calico-node" rollout to finish: 0 of 2 updated pods are available...
+Waiting for daemon set "calico-node" rollout to finish: 1 of 2 updated pods are available...
+daemon set "calico-node" successfully rolled out
+node/yotta-platform-control-plane condition met
+node/yotta-platform-worker condition met
+Waiting for deployment "coredns" rollout to finish: 0 of 2 updated replicas are available...
+Waiting for deployment "coredns" rollout to finish: 1 of 2 updated replicas are available...
+deployment "coredns" successfully rolled out
+deployment "local-path-provisioner" successfully rolled out
+"ingress-nginx" has been added to your repositories
+"metrics-server" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "metrics-server" chart repository
+...Successfully got an update from the "ingress-nginx" chart repository
+Update Complete. ⎈Happy Helming!⎈
+Release "ingress-nginx" does not exist. Installing it now.
+NAME: ingress-nginx
+LAST DEPLOYED: Mon Nov 16 05:55:33 2026
+NAMESPACE: ingress-nginx
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+The ingress-nginx controller has been installed.
+Get the application URL by running these commands:
+  export POD_NAME="$(kubectl get pods --namespace ingress-nginx --selector app.kubernetes.io/name=ingress-nginx,app.kubernetes.io/instance=ingress-nginx,app.kubernetes.io/component=controller --output jsonpath="{.items[0].metadata.name}")"
+  kubectl port-forward --namespace ingress-nginx "${POD_NAME}" 8080:80
+  echo "Visit http://127.0.0.1:8080 to access your application."
+
+An example Ingress that makes use of the controller:
+  apiVersion: networking.k8s.io/v1
+  kind: Ingress
+  metadata:
+    name: example
+    namespace: foo
+  spec:
+    ingressClassName: nginx
+    rules:
+      - host: www.example.com
+        http:
+          paths:
+            - pathType: Prefix
+              backend:
+                service:
+                  name: exampleService
+                  port:
+                    number: 80
+              path: /
+    # This section is only required if TLS is to be enabled for the Ingress
+    tls:
+      - hosts:
+        - www.example.com
+        secretName: example-tls
+
+If TLS is enabled for the Ingress, a Secret containing the certificate and key must also be provided:
+
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: example-tls
+    namespace: foo
+  data:
+    tls.crt: <base64 encoded cert>
+    tls.key: <base64 encoded key>
+  type: kubernetes.io/tls
+Release "metrics-server" does not exist. Installing it now.
+NAME: metrics-server
+LAST DEPLOYED: Mon Nov 16 05:56:09 2026
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+***********************************************************************
+* Metrics Server                                                      *
+***********************************************************************
+  Chart version: 3.14.0
+  App version:   0.9.0
+  Image tag:     registry.k8s.io/metrics-server/metrics-server:v0.9.0
+***********************************************************************
+deployment "metrics-server" successfully rolled out
+Release "cert-manager" does not exist. Installing it now.
+Pulled: quay.io/jetstack/charts/cert-manager:v1.21.3
+Digest: sha256:e482675aec32862d323a9218293ff7de81192337998615e4378c56498473f240
+NAME: cert-manager
+LAST DEPLOYED: Mon Nov 16 05:56:36 2026
+NAMESPACE: cert-manager
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+cert-manager v1.21.3 has been deployed successfully!
+
+In order to begin issuing certificates, you will need to set up a ClusterIssuer
+or Issuer resource (for example, by creating a 'letsencrypt-staging' issuer).
+
+More information on the different types of issuers and how to configure them
+can be found in our documentation:
+
+https://cert-manager.io/docs/configuration/
+
+For information on how to configure cert-manager to automatically provision
+Certificates for Ingress resources, take a look at the `ingress-shim`
+documentation:
+
+https://cert-manager.io/docs/usage/ingress/
+
+For information on how to configure cert-manager to automatically provision
+Certificates for Gateway API resources, take a look at the `gateway resource`
+documentation:
+
+https://cert-manager.io/docs/usage/gateway/
+deployment.apps/cert-manager condition met
+deployment.apps/cert-manager-cainjector condition met
+deployment.apps/cert-manager-webhook condition met
+"prometheus-community" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "prometheus-community" chart repository
+Update Complete. ⎈Happy Helming!⎈
+Release "prometheus" does not exist. Installing it now.
+NAME: prometheus
+LAST DEPLOYED: Mon Nov 16 05:57:06 2026
+NAMESPACE: observability
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+NOTES:
+kube-prometheus-stack has been installed. Check its status by running:
+  kubectl --namespace observability get pods -l "release=prometheus"
+
+Get Grafana 'admin' user password by running:
+
+  kubectl --namespace observability get secrets prometheus-grafana -o jsonpath="{.data.admin-password}" | base64 -d ; echo
+
+Access Grafana local instance:
+
+  export POD_NAME=$(kubectl --namespace observability get pod -l "app.kubernetes.io/name=grafana,app.kubernetes.io/instance=prometheus" -oname)
+  kubectl --namespace observability port-forward $POD_NAME 3000
+
+Get your grafana admin user password by running:
+
+  kubectl get secret --namespace observability -l app.kubernetes.io/component=admin-secret -o jsonpath="{.items[0].data.admin-password}" | base64 --decode ; echo
+
+
+Visit https://github.com/prometheus-operator/kube-prometheus for instructions on how to create & configure Alertmanager and Prometheus instances using the Operator.
+[+] Building 0.2s (6/6) FINISHED                                                                                                                                                docker:desktop-linux
+ => [internal] load build definition from Dockerfile                                                                                                                                            0.0s
+ => => transferring dockerfile: 544B                                                                                                                                                            0.0s
+ => [internal] load metadata for docker.io/fluent/fluentd:v1.20.1-debian-1.0                                                                                                                    0.0s
+ => [internal] load .dockerignore                                                                                                                                                               0.0s
+ => => transferring context: 2B                                                                                                                                                                 0.0s
+ => [1/2] FROM docker.io/fluent/fluentd:v1.20.1-debian-1.0@sha256:188ca130e9998adb2587cfa09416336b6d3bc309153b4564c48f9023fda12124                                                              0.0s
+ => => resolve docker.io/fluent/fluentd:v1.20.1-debian-1.0@sha256:188ca130e9998adb2587cfa09416336b6d3bc309153b4564c48f9023fda12124                                                              0.0s
+ => CACHED [2/2] RUN apt-get update     && apt-get upgrade -y     && apt-get install -y --no-install-recommends build-essential=12.12     && gem install fluent-plugin-grafana-loki:1.3.0 flue  0.0s
+ => exporting to image                                                                                                                                                                          0.1s
+ => => exporting layers                                                                                                                                                                         0.0s
+ => => exporting manifest sha256:95bc191c457fd354b08fdd99b0bc83798169b949db6627f57b784c8be6960f2b                                                                                               0.0s
+ => => exporting config sha256:7c5a0e157ebe66546395eaed065b428527a3ef975276621542c62b4d7b9c3e10                                                                                                 0.0s
+ => => exporting attestation manifest sha256:bd6cbc40c9cbebe765a8ce7d8cffd5bedf91eba19ae86a36261bd1d7792e7a3e                                                                                   0.0s
+ => => exporting manifest list sha256:35bf0ddbd69a78ec70d6ae429fc1723a5a84c0a75ffb8873f7f854b64b0f4fdb                                                                                          0.0s
+ => => naming to docker.io/yotta/fluentd-loki:local                                                                                                                                             0.0s
+ => => unpacking to docker.io/yotta/fluentd-loki:local                                                                                                                                          0.0s
+Image: "yotta/fluentd-loki:local" with ID "sha256:35bf0ddbd69a78ec70d6ae429fc1723a5a84c0a75ffb8873f7f854b64b0f4fdb" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/fluentd-loki:local" with ID "sha256:35bf0ddbd69a78ec70d6ae429fc1723a5a84c0a75ffb8873f7f854b64b0f4fdb" not yet present on node "yotta-platform-control-plane", loading...
+[+] Building 0.1s (13/13) FINISHED                                                                                                                                              docker:desktop-linux
+ => [internal] load build definition from Dockerfile                                                                                                                                            0.0s
+ => => transferring dockerfile: 562B                                                                                                                                                            0.0s
+ => [internal] load metadata for docker.io/library/python:3.12-slim-trixie                                                                                                                      0.0s
+ => [internal] load .dockerignore                                                                                                                                                               0.0s
+ => => transferring context: 2B                                                                                                                                                                 0.0s
+ => [1/8] FROM docker.io/library/python:3.12-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b                                                                0.0s
+ => => resolve docker.io/library/python:3.12-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b                                                                0.0s
+ => [internal] load build context                                                                                                                                                               0.0s
+ => => transferring context: 438B                                                                                                                                                               0.0s
+ => CACHED [2/8] RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*                                                                                                        0.0s
+ => CACHED [3/8] WORKDIR /app                                                                                                                                                                   0.0s
+ => CACHED [4/8] COPY requirements.txt ./                                                                                                                                                       0.0s
+ => CACHED [5/8] RUN python -m pip install --no-cache-dir pip==26.3 'setuptools>=78.1.1,<81' &&     python -m pip install --no-cache-dir -r requirements.txt                                    0.0s
+ => CACHED [6/8] COPY src ./src                                                                                                                                                                 0.0s
+ => CACHED [7/8] COPY publish_event.py ./publish_event.py                                                                                                                                       0.0s
+ => CACHED [8/8] RUN groupadd --gid 10001 app && useradd --uid 10001 --gid app --no-create-home app                                                                                             0.0s
+ => exporting to image                                                                                                                                                                          0.0s
+ => => exporting layers                                                                                                                                                                         0.0s
+ => => exporting manifest sha256:4a740fd283bc2d102065913b1563c228f7defe0c272345203a0931a1adb59a84                                                                                               0.0s
+ => => exporting config sha256:a62bd5adff712f6924182405ccdbc610dd276cae7c470c47c39e1cba52f33d96                                                                                                 0.0s
+ => => exporting attestation manifest sha256:cd0f89bb0c31710c51ce8584be182aabca78264542f5d0b7b237ad58d83ffed1                                                                                   0.0s
+ => => exporting manifest list sha256:24556da994a9a5bbc646f5a11001ed309824ccc0ccb2d222b070c7d8affcebb0                                                                                          0.0s
+ => => naming to docker.io/yotta/website-orchestrator:local                                                                                                                                     0.0s
+ => => unpacking to docker.io/yotta/website-orchestrator:local                                                                                                                                  0.0s
+Image: "yotta/website-orchestrator:local" with ID "sha256:24556da994a9a5bbc646f5a11001ed309824ccc0ccb2d222b070c7d8affcebb0" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/website-orchestrator:local" with ID "sha256:24556da994a9a5bbc646f5a11001ed309824ccc0ccb2d222b070c7d8affcebb0" not yet present on node "yotta-platform-control-plane", loading...
+Release "platform" does not exist. Installing it now.
+NAME: platform
+LAST DEPLOYED: Mon Nov 16 05:58:45 2026
+NAMESPACE: platform
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+secret/orchestrator-github-token created
+deployment.apps/website-orchestrator restarted
+Waiting for deployment "website-orchestrator" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "website-orchestrator" rollout to finish: 1 old replicas are pending termination...
+deployment "website-orchestrator" successfully rolled out
+Platform is ready. Deploy Day 0 with the Provisioning API GitHub Actions workflow.
+Kind platform is ready on HTTPS port 8443. Run: kubectl port-forward -n observability svc/prometheus-grafana 3000:80
+Building and loading the local Provisioning API image...
+[+] Building 0.2s (12/12) FINISHED                                                                                                                                              docker:desktop-linux
+ => [internal] load build definition from Dockerfile                                                                                                                                            0.0s
+ => => transferring dockerfile: 742B                                                                                                                                                            0.0s
+ => [internal] load metadata for docker.io/library/python:3.12-slim-trixie                                                                                                                      0.0s
+ => [internal] load .dockerignore                                                                                                                                                               0.0s
+ => => transferring context: 87B                                                                                                                                                                0.0s
+ => [1/7] FROM docker.io/library/python:3.12-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b                                                                0.0s
+ => => resolve docker.io/library/python:3.12-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b                                                                0.0s
+ => [internal] load build context                                                                                                                                                               0.0s
+ => => transferring context: 363B                                                                                                                                                               0.0s
+ => CACHED [2/7] RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*                                                                                                        0.0s
+ => CACHED [3/7] WORKDIR /app                                                                                                                                                                   0.0s
+ => CACHED [4/7] COPY requirements.txt ./                                                                                                                                                       0.0s
+ => CACHED [5/7] RUN python -m pip install --no-cache-dir pip==26.3 'setuptools>=78.1.1,<81' &&     python -m pip install --no-cache-dir -r requirements.txt                                    0.0s
+ => CACHED [6/7] COPY src ./src                                                                                                                                                                 0.0s
+ => CACHED [7/7] RUN groupadd --gid 10001 app && useradd --uid 10001 --gid app --no-create-home app                                                                                             0.0s
+ => exporting to image                                                                                                                                                                          0.0s
+ => => exporting layers                                                                                                                                                                         0.0s
+ => => exporting manifest sha256:4db27093557b4c5a91ff01ef3dd845d84a1177bcbe7c4de4ba811f8bfdea3298                                                                                               0.0s
+ => => exporting config sha256:905ad1381e48ddf5d4de3c6008c7c7dcde3a89be66f18e1a2e4224eb6540563b                                                                                                 0.0s
+ => => exporting attestation manifest sha256:a712237d43c3b1d72167aab758f96e223a1775e79261fee3fbc92ed66d285a04                                                                                   0.0s
+ => => exporting manifest list sha256:c177b5c86b9f064b591e3603465c8a8c0c115980e534d02f5bee2726399c3b7f                                                                                          0.0s
+ => => naming to docker.io/yotta/website-provisioning:local                                                                                                                                     0.0s
+ => => unpacking to docker.io/yotta/website-provisioning:local                                                                                                                                  0.0s
+Image: "yotta/website-provisioning:local" with ID "sha256:c177b5c86b9f064b591e3603465c8a8c0c115980e534d02f5bee2726399c3b7f" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/website-provisioning:local" with ID "sha256:c177b5c86b9f064b591e3603465c8a8c0c115980e534d02f5bee2726399c3b7f" not yet present on node "yotta-platform-control-plane", loading...
+Release "website-provisioning" does not exist. Installing it now.
+NAME: website-provisioning
+LAST DEPLOYED: Mon Nov 16 05:59:50 2026
+NAMESPACE: platform
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+deployment "website-provisioning" successfully rolled out
+Building and loading the local Website image...
+[+] Building 0.3s (12/12) FINISHED                                                                                                                                              docker:desktop-linux
+ => [internal] load build definition from Dockerfile                                                                                                                                            0.0s
+ => => transferring dockerfile: 742B                                                                                                                                                            0.0s
+ => [internal] load metadata for docker.io/library/python:3.12-slim-trixie                                                                                                                      0.0s
+ => [internal] load .dockerignore                                                                                                                                                               0.0s
+ => => transferring context: 87B                                                                                                                                                                0.0s
+ => [1/7] FROM docker.io/library/python:3.12-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b                                                                0.0s
+ => => resolve docker.io/library/python:3.12-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b                                                                0.0s
+ => [internal] load build context                                                                                                                                                               0.0s
+ => => transferring context: 478B                                                                                                                                                               0.0s
+ => CACHED [2/7] RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*                                                                                                        0.0s
+ => CACHED [3/7] WORKDIR /app                                                                                                                                                                   0.0s
+ => CACHED [4/7] COPY requirements.txt ./                                                                                                                                                       0.0s
+ => CACHED [5/7] RUN python -m pip install --no-cache-dir pip==26.3 'setuptools>=78.1.1,<81' &&     python -m pip install --no-cache-dir -r requirements.txt                                    0.0s
+ => CACHED [6/7] COPY src ./src                                                                                                                                                                 0.0s
+ => CACHED [7/7] RUN groupadd --gid 10001 app && useradd --uid 10001 --gid app --no-create-home app                                                                                             0.0s
+ => exporting to image                                                                                                                                                                          0.1s
+ => => exporting layers                                                                                                                                                                         0.0s
+ => => exporting manifest sha256:347616b142c5ca1cdce5048c0cc64e899f7a79373af3621a57bd9837a5db89bb                                                                                               0.0s
+ => => exporting config sha256:ce8165b152b8cd91385b1a3f8863c8c6c527ff5d257e322fd8ce21346c0ad3e7                                                                                                 0.0s
+ => => exporting attestation manifest sha256:1a46010704e23b585d956c36cd2cdb84f102c03642a7c72a6392d3c899a62244                                                                                   0.0s
+ => => exporting manifest list sha256:6905f8a1fba9141b75b1e45cff6ab5e415ae9023b56abc620dcbfe3172cff695                                                                                          0.0s
+ => => naming to docker.io/yotta/website-app:local                                                                                                                                              0.0s
+ => => unpacking to docker.io/yotta/website-app:local                                                                                                                                           0.0s
+Image: "yotta/website-app:local" with ID "sha256:6905f8a1fba9141b75b1e45cff6ab5e415ae9023b56abc620dcbfe3172cff695" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/website-app:local" with ID "sha256:6905f8a1fba9141b75b1e45cff6ab5e415ae9023b56abc620dcbfe3172cff695" not yet present on node "yotta-platform-control-plane", loading...
+Deploying tenant user1 (user1.myyotta.com)...
+Image: "yotta/website-app:local" with ID "sha256:6905f8a1fba9141b75b1e45cff6ab5e415ae9023b56abc620dcbfe3172cff695" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/website-app:local" with ID "sha256:6905f8a1fba9141b75b1e45cff6ab5e415ae9023b56abc620dcbfe3172cff695" not yet present on node "yotta-platform-control-plane", loading...
+Image: "yotta/website-orchestrator:local" with ID "sha256:24556da994a9a5bbc646f5a11001ed309824ccc0ccb2d222b070c7d8affcebb0" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/website-orchestrator:local" with ID "sha256:24556da994a9a5bbc646f5a11001ed309824ccc0ccb2d222b070c7d8affcebb0" not yet present on node "yotta-platform-control-plane", loading...
+Flag --atomic has been deprecated, use --rollback-on-failure instead
+Release "user1" does not exist. Installing it now.
+NAME: user1
+LAST DEPLOYED: Mon Nov 16 06:00:28 2026
+NAMESPACE: user1
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+curl: (56) The requested URL returned error: 503
+NAME: user1
+LAST DEPLOYED: Mon Nov 16 06:00:28 2026
+NAMESPACE: user1
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE:     user1-publish-website-deployed
+Last Started:   Mon Nov 16 06:00:53 2026
+Last Completed: Mon Nov 16 06:00:56 2026
+Phase:          Succeeded
+
+Deployment healthy: tenant=user1 domain=user1.myyotta.com image=yotta/website-app:local
+Deploying tenant user2 (user2.myyotta.com)...
+Image: "yotta/website-app:local" with ID "sha256:6905f8a1fba9141b75b1e45cff6ab5e415ae9023b56abc620dcbfe3172cff695" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/website-app:local" with ID "sha256:6905f8a1fba9141b75b1e45cff6ab5e415ae9023b56abc620dcbfe3172cff695" not yet present on node "yotta-platform-control-plane", loading...
+Image: "yotta/website-orchestrator:local" with ID "sha256:24556da994a9a5bbc646f5a11001ed309824ccc0ccb2d222b070c7d8affcebb0" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/website-orchestrator:local" with ID "sha256:24556da994a9a5bbc646f5a11001ed309824ccc0ccb2d222b070c7d8affcebb0" not yet present on node "yotta-platform-control-plane", loading...
+Flag --atomic has been deprecated, use --rollback-on-failure instead
+Release "user2" does not exist. Installing it now.
+NAME: user2
+LAST DEPLOYED: Mon Nov 16 06:01:00 2026
+NAMESPACE: user2
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+curl: (56) The requested URL returned error: 503
+NAME: user2
+LAST DEPLOYED: Mon Nov 16 06:01:00 2026
+NAMESPACE: user2
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE:     user2-publish-website-deployed
+Last Started:   Mon Nov 16 06:01:25 2026
+Last Completed: Mon Nov 16 06:01:29 2026
+Phase:          Succeeded
+
+Deployment healthy: tenant=user2 domain=user2.myyotta.com image=yotta/website-app:local
+Deploying tenant user3 (user3.myyotta.com)...
+Image: "yotta/website-app:local" with ID "sha256:6905f8a1fba9141b75b1e45cff6ab5e415ae9023b56abc620dcbfe3172cff695" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/website-app:local" with ID "sha256:6905f8a1fba9141b75b1e45cff6ab5e415ae9023b56abc620dcbfe3172cff695" not yet present on node "yotta-platform-control-plane", loading...
+Image: "yotta/website-orchestrator:local" with ID "sha256:24556da994a9a5bbc646f5a11001ed309824ccc0ccb2d222b070c7d8affcebb0" not yet present on node "yotta-platform-worker", loading...
+Image: "yotta/website-orchestrator:local" with ID "sha256:24556da994a9a5bbc646f5a11001ed309824ccc0ccb2d222b070c7d8affcebb0" not yet present on node "yotta-platform-control-plane", loading...
+Flag --atomic has been deprecated, use --rollback-on-failure instead
+Release "user3" does not exist. Installing it now.
+NAME: user3
+LAST DEPLOYED: Mon Nov 16 06:01:33 2026
+NAMESPACE: user3
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+curl: (56) The requested URL returned error: 503
+NAME: user3
+LAST DEPLOYED: Mon Nov 16 06:01:33 2026
+NAMESPACE: user3
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE:     user3-publish-website-deployed
+Last Started:   Mon Nov 16 06:01:58 2026
+Last Completed: Mon Nov 16 06:02:02 2026
+Phase:          Succeeded
+
+Deployment healthy: tenant=user3 domain=user3.myyotta.com image=yotta/website-app:local
+
+End-to-end local setup is ready.
+Provisioning API: https://provisioning.myyotta.com:8443
+Tenant websites:
+  https://user1.myyotta.com:8443
+  https://user2.myyotta.com:8443
+  https://user3.myyotta.com:8443
+
+For local name resolution, add this line to /etc/hosts if it is not present:
+127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com

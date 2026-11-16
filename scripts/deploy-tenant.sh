@@ -12,6 +12,7 @@ PULL_IMAGE="${PULL_IMAGE:-true}"
 HELM_TIMEOUT=10m
 ROLLBACK_TIMEOUT=5m
 HELM_TEST_TIMEOUT=3m
+HELM_ROLLBACK_OPTION=(--atomic)
 READINESS_ATTEMPTS=30
 READINESS_RETRY_SECONDS=4
 REQUIRED_TOOLS=(docker kind helm curl python3)
@@ -31,6 +32,10 @@ cluster_name="${CLUSTER_NAME:-$DEFAULT_CLUSTER_NAME}"
 for tool in "${REQUIRED_TOOLS[@]}"; do
   command -v "$tool" >/dev/null || { echo "Install $tool and retry" >&2; exit 1; }
 done
+
+if helm upgrade --help 2>&1 | grep -q -- '--rollback-on-failure'; then
+  HELM_ROLLBACK_OPTION=(--rollback-on-failure)
+fi
 
 if [[ ! "$tenant" =~ ^[a-z][a-z0-9-]{1,30}[a-z0-9]$ ]]; then
   echo "Tenant must be a DNS-safe name between 3 and 32 characters" >&2
@@ -68,11 +73,14 @@ failure_rollback() {
 trap failure_rollback EXIT
 
 if [[ "$PULL_IMAGE" == "true" ]]; then
-  docker pull "$image"
-  docker pull "$orchestrator_image"
+  # Images from the registry are multi-platform: load only the nodes' platform
+  "$(dirname "$0")/load-image-into-kind.sh" "$image" "$cluster_name"
+  "$(dirname "$0")/load-image-into-kind.sh" "$orchestrator_image" "$cluster_name"
+else
+  # Locally built images have a single platform and load as they are
+  kind load docker-image "$image" --name "$cluster_name"
+  kind load docker-image "$orchestrator_image" --name "$cluster_name"
 fi
-kind load docker-image "$image" --name "$cluster_name"
-kind load docker-image "$orchestrator_image" --name "$cluster_name"
 helm upgrade --install "$release" "$TENANT_CHART" \
   --server-side=false \
   --namespace "$namespace" \
@@ -86,7 +94,7 @@ helm upgrade --install "$release" "$TENANT_CHART" \
   --set eventPublisher.enabled=true \
   --set eventPublisher.image="$orchestrator_image" \
   --set eventPublisher.correlationId="$correlation_id" \
-  --atomic --wait --timeout "$HELM_TIMEOUT"
+  "${HELM_ROLLBACK_OPTION[@]}" --wait --timeout "$HELM_TIMEOUT"
 
 for ((attempt = 1; attempt <= READINESS_ATTEMPTS; attempt++)); do
   if curl --silent --show-error --insecure --fail --resolve "$domain:$LOCAL_HTTPS_PORT:$LOCAL_HOST_IP" "https://$domain:$LOCAL_HTTPS_PORT$HEALTH_PATH" >/dev/null; then

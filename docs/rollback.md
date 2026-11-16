@@ -1,6 +1,6 @@
 # Deployment rollback
 
-Helm upgrade uses `--atomic --wait`, so Kubernetes readiness failures automatically roll back a failed upgrade. The deploy script records the last successful Helm revision before upgrade. It then tests the HTTPS readiness route and publishes the deployment event to Kafka. If either post-upgrade check fails, the exit trap runs `helm rollback` to the saved revision. If this was the first install, it uninstalls the failed release.
+Helm upgrade uses `--rollback-on-failure --wait` when the installed Helm supports that option, and falls back to `--atomic --wait` on older Helm versions. Kubernetes rollout failures therefore roll back automatically. The deploy script records the last successful Helm revision before upgrade. It then tests the HTTPS readiness route and publishes the deployment event to Kafka. If either post-upgrade check fails, the exit trap runs `helm rollback` to the saved revision. If this was the first install, it uninstalls the failed release.
 
 Inspect releases and revisions with:
 

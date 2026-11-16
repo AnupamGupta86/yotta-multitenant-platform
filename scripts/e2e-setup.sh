@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Recreate the local Kind cluster and install the platform, Provisioning API, and sample tenant; run with ./scripts/e2e-setup.sh [tenant] [domain].
+# Recreate the local Kind cluster and install the platform, Provisioning API, and assignment tenants user1-user3; pass [tenant] [domain] to install one custom tenant.
 set -euo pipefail
 
 # Configuration defaults. Override image/host defaults with environment variables,
-# or pass the tenant and domain as positional arguments.
-DEFAULT_TENANT="${DEFAULT_TENANT:-user1}"
+# or pass a tenant and optional domain to install one tenant instead of the samples.
+DEFAULT_TENANT="${DEFAULT_TENANT:-}"
+DEFAULT_TENANTS=(user1 user2 user3)
 DEFAULT_DOMAIN_SUFFIX="${DEFAULT_DOMAIN_SUFFIX:-myyotta.com}"
 CLUSTER_NAME="${CLUSTER_NAME:-yotta-platform}"
 CLUSTER_DELETE_CONFIRMATION="delete ${CLUSTER_NAME}"
@@ -26,14 +27,45 @@ LOCAL_HOST_IP="${LOCAL_HOST_IP:-127.0.0.1}"
 REQUIRED_TOOLS=(docker kind kubectl helm curl)
 SETUP_KIND_SCRIPT="./scripts/setup-kind.sh"
 DEPLOY_TENANT_SCRIPT="./scripts/deploy-tenant.sh"
+TENANTS_TO_DEPLOY=()
+DOMAINS_TO_DEPLOY=()
+HOSTS_TO_RESOLVE=()
+script_dir=""
+repo_root=""
+remote=""
+tenant=""
+domain=""
+tool=""
+tenant_index=0
+typed_confirmation=""
+provisioning_tag=""
+provisioning_repository=""
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 cd "$repo_root"
 
-tenant="${1:-$DEFAULT_TENANT}"
-domain="${2:-${tenant}.${DEFAULT_DOMAIN_SUFFIX}}"
-typed_confirmation=""
+if (($# > 2)); then
+  echo "Usage: ./scripts/e2e-setup.sh [tenant] [domain]" >&2
+  exit 2
+fi
+
+if [[ -n "${1:-}" ]]; then
+  tenant="$1"
+  domain="${2:-${tenant}.${DEFAULT_DOMAIN_SUFFIX}}"
+  TENANTS_TO_DEPLOY=("$tenant")
+  DOMAINS_TO_DEPLOY=("$domain")
+elif [[ -n "$DEFAULT_TENANT" ]]; then
+  tenant="$DEFAULT_TENANT"
+  domain="${tenant}.${DEFAULT_DOMAIN_SUFFIX}"
+  TENANTS_TO_DEPLOY=("$tenant")
+  DOMAINS_TO_DEPLOY=("$domain")
+else
+  TENANTS_TO_DEPLOY=("${DEFAULT_TENANTS[@]}")
+  for tenant in "${TENANTS_TO_DEPLOY[@]}"; do
+    DOMAINS_TO_DEPLOY+=("${tenant}.${DEFAULT_DOMAIN_SUFFIX}")
+  done
+fi
 
 for tool in "${REQUIRED_TOOLS[@]}"; do
   command -v "$tool" >/dev/null || { echo "Install $tool and retry" >&2; exit 1; }
@@ -103,15 +135,22 @@ echo "Building and loading the local Website image..."
 docker build -t "$WEBSITE_IMAGE" "$WEBSITE_BUILD_CONTEXT"
 kind load docker-image "$WEBSITE_IMAGE" --name "$CLUSTER_NAME"
 
-echo "Deploying tenant $tenant ($domain)..."
-PULL_IMAGE=false "$DEPLOY_TENANT_SCRIPT" "$tenant" "$domain" "$WEBSITE_IMAGE" "$WEBSITE_ORCHESTRATOR_IMAGE"
+for tenant_index in "${!TENANTS_TO_DEPLOY[@]}"; do
+  tenant="${TENANTS_TO_DEPLOY[$tenant_index]}"
+  domain="${DOMAINS_TO_DEPLOY[$tenant_index]}"
+  echo "Deploying tenant $tenant ($domain)..."
+  PULL_IMAGE=false "$DEPLOY_TENANT_SCRIPT" "$tenant" "$domain" "$WEBSITE_IMAGE" "$WEBSITE_ORCHESTRATOR_IMAGE"
+done
 
-cat <<EOF
+echo
+echo "End-to-end local setup is ready."
+echo "Provisioning API: https://${PROVISIONING_HOST}:${LOCAL_HTTPS_PORT}"
+echo "Tenant websites:"
+for domain in "${DOMAINS_TO_DEPLOY[@]}"; do
+  echo "  https://${domain}:${LOCAL_HTTPS_PORT}"
+done
 
-End-to-end local setup is ready.
-Provisioning API: https://${PROVISIONING_HOST}:${LOCAL_HTTPS_PORT}
-Tenant website:   https://${domain}:${LOCAL_HTTPS_PORT}
-
-For local name resolution, add this line to /etc/hosts if it is not present:
-${LOCAL_HOST_IP} ${PROVISIONING_HOST} ${domain}
-EOF
+HOSTS_TO_RESOLVE=("$PROVISIONING_HOST" "${DOMAINS_TO_DEPLOY[@]}")
+echo
+echo "For local name resolution, add this line to /etc/hosts if it is not present:"
+printf '%s %s\n' "$LOCAL_HOST_IP" "${HOSTS_TO_RESOLVE[*]}"

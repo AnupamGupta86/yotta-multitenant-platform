@@ -71,10 +71,8 @@ jobs:
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           echo "FLUENTD_IMAGE=$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_ENV"
-      - name: Pull and load the Fluentd image into Kind
-        run: |
-          docker pull "$FLUENTD_IMAGE"
-          kind load docker-image "$FLUENTD_IMAGE" --name "$KIND_CLUSTER_NAME"
+      - name: Load the Fluentd image into Kind (nodes' platform only)
+        run: ./scripts/load-image-into-kind.sh "$FLUENTD_IMAGE" "$KIND_CLUSTER_NAME"
       - name: Deploy cluster add-ons through Helm
         run: ./scripts/deploy-cluster-addons.sh
       - name: Read pinned monitoring chart version
