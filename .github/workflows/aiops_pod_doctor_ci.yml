@@ -1,3 +1,4 @@
+# CI retrigger marker: 2026-11-16 19:30 IST end-to-end check.
 name: AIOps Pod Doctor CI
 on:
   push:
