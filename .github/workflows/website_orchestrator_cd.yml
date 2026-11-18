@@ -124,14 +124,6 @@ jobs:
         run: |
           ./scripts/copy-database-secret.sh "$PLATFORM_NAMESPACE" \
             || echo "::warning::Platform database not deployed yet: the orchestrator runs without recording events. Run Database Deployment, then re-run this workflow."
-      - name: "One-time move: the orchestrator must no longer belong to the platform release"
-        run: |
-          owner="$(kubectl get deployment "$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --namespace "$PLATFORM_NAMESPACE" \
-            -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || true)"
-          if [ "$owner" = "$LEGACY_PLATFORM_RELEASE_NAME" ]; then
-            echo "::error::The orchestrator is still part of the legacy '$LEGACY_PLATFORM_RELEASE_NAME' release (from before the chart split). Run Platform Deployment first: it removes that release; then re-run this workflow to install it as its own release."
-            exit 1
-          fi
       - name: Install or upgrade the website-orchestrator release with Helm
         env:
           GHCR_REPOSITORY: ${{ github.repository }}

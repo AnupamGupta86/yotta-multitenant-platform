@@ -83,8 +83,6 @@ jobs:
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           echo "FLUENTD_IMAGE=$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_ENV"
-      - name: "One-time move: legacy platform release (what the deploy job removes)"
-        run: bash .github/scripts/remove-legacy-platform-release.sh
       - name: "Changes: cluster add-ons and ClusterIssuer (deployed vs new)"
         run: ./scripts/deploy-cluster-addons.sh
       - name: "Changes: monitoring and Grafana dashboards (deployed vs new)"
@@ -140,8 +138,6 @@ jobs:
           echo "FLUENTD_IMAGE=$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_ENV"
       - name: Load the Fluentd image into Kind (nodes' platform only)
         run: ./scripts/load-image-into-kind.sh "$FLUENTD_IMAGE" "$KIND_CLUSTER_NAME"
-      - name: "One-time move: remove the legacy platform release (Kafka data is kept)"
-        run: bash .github/scripts/remove-legacy-platform-release.sh
       - name: Deploy cluster add-ons and the ClusterIssuer through Helm
         run: ./scripts/deploy-cluster-addons.sh
       - name: Add and update monitoring Helm repository

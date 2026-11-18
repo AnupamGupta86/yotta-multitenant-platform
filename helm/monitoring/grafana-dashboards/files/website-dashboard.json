@@ -31,7 +31,7 @@
           "refId": "namespace"
         },
         "definition": "label_values(kube_pod_info, namespace)",
-        "regex": "/^(?!kube-|calico-|tigera-|cert-manager|ingress-nginx|local-path|default$).*/",
+        "regex": "/^(?!kube-|calico-|tigera-|cert-manager|infrastructure|local-path|default$).*/",
         "multi": true,
         "includeAll": true,
         "refresh": 2,

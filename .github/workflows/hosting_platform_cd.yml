@@ -65,13 +65,6 @@ jobs:
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           echo "IMAGE=$CONTAINER_REGISTRY/$owner/$HOSTING_PLATFORM_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
-      - name: "One-time move: legacy website-provisioning release (removed by the deploy job)"
-        run: |
-          if helm status website-provisioning --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
-            echo "::warning::The deploy job uninstalls the legacy 'website-provisioning' release (renamed to hosting-platform; same API host)."
-          else
-            echo "No legacy website-provisioning release."
-          fi
       - name: "Changes: hosting-platform release (deployed vs new)"
         run: .github/scripts/helm-releases.sh hosting-platform
       - uses: actions/upload-artifact@v6
@@ -123,11 +116,6 @@ jobs:
         run: ./scripts/load-image-into-kind.sh "$IMAGE" "$KIND_CLUSTER_NAME"
       - name: Give the service the platform database password (copied from platform-data)
         run: ./scripts/copy-database-secret.sh "$PLATFORM_NAMESPACE"
-      - name: "One-time move: remove the legacy website-provisioning release (same API host as hosting-platform)"
-        run: |
-          if helm status website-provisioning --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
-            helm uninstall website-provisioning --namespace "$PLATFORM_NAMESPACE" --wait --timeout 5m
-          fi
       - name: Install or upgrade the Day 0 release through Helm
         run: |
           .github/scripts/helm-releases.sh hosting-platform

@@ -95,7 +95,7 @@ yotta-multitenant-platform/
 ├── scripts/                      Automation used locally and by the pipelines
 │   ├── setup-local-e2e.sh        One command: fresh Kind cluster + everything + user1-3
 │   ├── setup-kind.sh             Create/update the cluster, add-ons, monitoring, platform
-│   ├── deploy-cluster-addons.sh  Calico, ingress-nginx, cert-manager, metrics-server (versions in cluster-addons.env)
+│   ├── deploy-cluster-addons.sh  Calico, ingress-nginx (namespace infrastructure), cert-manager, metrics-server (versions in cluster-addons.env)
 │   ├── deploy-sample-tenants.sh  Deploy the website chart for the sample tenants user1-user3
 │   ├── deploy-tenant.sh          Deploy one tenant: Helm, HTTPS check, Helm test, automatic rollback
 │   ├── load-image-into-kind.sh   Load only the node's platform of a multi-platform image into Kind
@@ -312,8 +312,7 @@ logging and Kafka; the other pipelines stop with a clear message until then.
 |---|---|---|
 | `image_tag` | yes | Fluentd tag from Platform CI |
 
-Steps: validate tag → Kind running → load Fluentd image → one-time removal of the legacy `platform` release (clusters
-from before the chart split; Kafka's PVC is kept) → cluster add-ons (Calico, ingress-nginx, metrics-server, cert-manager,
+Steps: validate tag → Kind running → load Fluentd image → cluster add-ons (Calico, ingress-nginx in namespace `infrastructure`, metrics-server, cert-manager,
 then `cluster-issuer`) → `prometheus` release (Prometheus + Grafana + Alertmanager, each with an Ingress:
 `https://grafana|prometheus|alertmanager.myyotta.com:8443`) and `grafana-dashboards` → `logging` (Loki, Fluentd) →
 `kafka` (Kafka, kafka-exporter; after monitoring so its ServiceMonitor is created).
@@ -339,9 +338,7 @@ gh workflow run platform_cd.yml --ref master -f image_tag=<tag>
 
 Needs: the `kafka` release and `ORCHESTRATOR_GITHUB_TOKEN` (stored in the Secret `orchestrator-github-token`
 so the orchestrator can start Website Deployment and Website Teardown). Installs or upgrades its own release
-`website-orchestrator` from `helm/website-orchestrator-helm` in namespace `platform`. On a cluster from before the chart
-split, run Platform Deployment first (it removes the legacy `platform` release); this workflow stops
-with that message otherwise.
+`website-orchestrator` from `helm/website-orchestrator-helm` in namespace `platform`.
 
 ```sh
 gh workflow run website_orchestrator_cd.yml --ref master -f image_tag=<tag>
@@ -508,7 +505,6 @@ gh run list --workflow website_cd.yml --limit 3
 | ShellCheck / ruff / hadolint failure in CI | lint finding | fix the reported line; CI fails on info-level findings too |
 | `another operation (install/upgrade/rollback) is in progress` | an earlier run was cancelled mid-upgrade | re-run the CD: it rolls the release back (or removes a never-deployed one) before upgrading |
 | `The kafka release is not installed yet` | fresh cluster | run Platform Deployment first |
-| `The orchestrator is still part of the 'platform' release` | cluster from before the chart split | run Platform Deployment, then Website Orchestrator Deployment |
 | `Docker is not reachable` from the setup scripts | Colima stopped, or the docker CLI still uses Docker Desktop's context | `colima start --cpu 4 --memory 8`, then `docker context use colima` (the scripts do both when Colima is installed) |
 | `docker-credential-desktop: executable file not found` | Docker Desktop's credential helper left in `~/.docker/config.json` | remove the `"credsStore": "desktop"` line |
 | Same URL alternates between 404 and 200 | an older pod is still serving (old image or old ReplicaSet), or two Ingresses claim the host | `./scripts/check-routes.sh` names the pod or Ingress; `kubectl rollout restart deployment/<name> -n <ns>` |

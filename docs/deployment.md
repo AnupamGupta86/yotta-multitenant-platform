@@ -88,8 +88,6 @@ Each pushed image is tagged `MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS` (UTC build time),
 
 The website orchestrator has its own chart, `helm/website-orchestrator-helm` (chart and release `website-orchestrator`, namespace `platform`), deployed by **Website Orchestrator Deployment** after **Platform Deployment** has installed Kafka. Before running it, add the repository Actions secret `ORCHESTRATOR_GITHUB_TOKEN`: a fine-grained token scoped to this repository with **Actions: Read and write**, so the orchestrator can dispatch Website Deployment and Website Teardown. The workflow passes `github.repository` as `github.repository` and stores the token in the Secret `orchestrator-github-token` (never in Helm values).
 
-Upgrading a cluster from before the chart split: run Platform Deployment first (it removes the legacy `platform` release, which held the old orchestrator Deployment), then Website Orchestrator Deployment (it installs the new release). Events published in between wait in Kafka.
-
 ### Manual approval
 
 Every deployment pipeline waits for a person to approve it before it changes anything. Each one deploys through its own GitHub environment, so an approval covers exactly one kind of change and each has its own deployment history:

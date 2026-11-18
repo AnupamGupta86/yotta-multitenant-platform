@@ -90,7 +90,7 @@ networkPolicy:
   enabled: true
   appPolicyName: website
   ingressNamespaces:
-    - ingress-nginx
+    - infrastructure   # ingress-nginx controller
     - observability
   dnsNamespace: kube-system
   dnsPodLabel: k8s-app

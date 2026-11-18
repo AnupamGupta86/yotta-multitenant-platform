@@ -201,7 +201,7 @@ templating = {"list": [
     {"name": "namespace", "label": "Namespace (service area / website)", "type": "query", "datasource": PROM,
      "query": {"query": "label_values(kube_pod_info, namespace)", "refId": "namespace"},
      "definition": "label_values(kube_pod_info, namespace)",
-     "regex": "/^(?!kube-|calico-|tigera-|cert-manager|ingress-nginx|local-path|default$).*/",
+     "regex": "/^(?!kube-|calico-|tigera-|cert-manager|infrastructure|local-path|default$).*/",
      "multi": True, "includeAll": True, "refresh": 2, "sort": 1,
      "current": {"selected": True, "text": ["All"], "value": ["$__all"]}},
     {"name": "service", "label": "Service (container)", "type": "query", "datasource": PROM,

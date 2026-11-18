@@ -7,7 +7,7 @@ set -euo pipefail
 tenant="${1:?usage: check-teardown-target.sh <tenant>}"
 protected="default kube-system kube-public kube-node-lease ${PLATFORM_NAMESPACE:-platform} \
 ${OBSERVABILITY_NAMESPACE:-observability} ${AIOPS_NAMESPACE:-aiops} ${DATABASE_NAMESPACE:-platform-data} \
-ingress-nginx cert-manager tigera-operator calico-system calico-apiserver local-path-storage"
+infrastructure cert-manager tigera-operator calico-system calico-apiserver local-path-storage"
 
 if [[ ! "$tenant" =~ ^[a-z][a-z0-9-]{1,30}[a-z0-9]$ ]]; then
   echo "::error::'$tenant' is not a valid tenant name" >&2
@@ -21,7 +21,7 @@ for name in $protected; do
 done
 chart="$(helm list --namespace "$tenant" --filter "^${tenant}\$" --output json | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r[0]["chart"] if r else "")')"
 case "$chart" in
-  website-[0-9]* | website-app-[0-9]*) echo "OK: $tenant is a tenant website (chart $chart)" ;;   # website-app: before the rename
+  website-[0-9]*) echo "OK: $tenant is a tenant website (chart $chart)" ;;
   "")
     if kubectl get namespace "$tenant" >/dev/null 2>&1; then
       echo "::error::namespace $tenant exists but has no website release named $tenant; refusing to delete it" >&2

@@ -73,7 +73,6 @@ tenant_helm_args=(
   --server-side=false
   --namespace "$namespace"
   --create-namespace
-  --take-ownership
   --set tenant.name="$tenant"
   --set image.repository="$repository"
   --set image.tag="$tag"

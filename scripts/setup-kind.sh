@@ -53,9 +53,6 @@ source "$script_dir/check-docker.sh"   # Colima or Docker Desktop: reachable, st
 
 if ! kind get clusters | grep -qx "$cluster_name"; then
   kind create cluster --name "$cluster_name" --config kind/cluster.yaml
-elif kubectl get daemonset calico-node --namespace kube-system >/dev/null 2>&1 && ! helm status calico -n tigera-operator >/dev/null 2>&1; then
-  echo "This Kind cluster has Calico installed from raw manifests. Back up any demo data, then recreate the cluster to switch CNI ownership to Helm." >&2
-  exit 2
 fi
 # After a Colima or Docker restart the Kind node containers stay stopped: start them again
 # (deploy-cluster-addons.sh then waits until every node is Ready)
@@ -67,9 +64,6 @@ for node in $(kind get nodes --name "$cluster_name"); do
 done
 kubectl cluster-info --context "kind-$cluster_name"
 
-# Clusters from before the chart split: remove the old single "platform" release first (Kafka data is kept)
-LEGACY_PLATFORM_RELEASE_NAME=platform PLATFORM_NAMESPACE="$PLATFORM_NAMESPACE" \
-  bash "$script_dir/../.github/scripts/remove-legacy-platform-release.sh"
 "$ADDONS_SCRIPT"
 helm_retry helm repo add "$PROMETHEUS_REPOSITORY" "$PROMETHEUS_REPOSITORY_URL" --force-update
 helm_retry helm repo update "$PROMETHEUS_REPOSITORY"
@@ -84,17 +78,17 @@ docker build -t "$WEBSITE_ORCHESTRATOR_IMAGE" "$WEBSITE_ORCHESTRATOR_BUILD_CONTE
 kind load docker-image "$WEBSITE_ORCHESTRATOR_IMAGE" --name "$cluster_name"
 
 helm upgrade --install "$DASHBOARDS_RELEASE" "$DASHBOARDS_CHART" \
-  --namespace "$PROMETHEUS_NAMESPACE" --take-ownership --wait --timeout "$ROLLOUT_TIMEOUT"
+  --namespace "$PROMETHEUS_NAMESPACE" --wait --timeout "$ROLLOUT_TIMEOUT"
 helm upgrade --install "$LOGGING_RELEASE" "$LOGGING_CHART" \
-  --namespace "$PROMETHEUS_NAMESPACE" --create-namespace --take-ownership \
+  --namespace "$PROMETHEUS_NAMESPACE" --create-namespace \
   --set-string images.fluentd="$FLUENTD_IMAGE" \
   --wait --timeout "$PLATFORM_TIMEOUT"
 helm upgrade --install "$KAFKA_RELEASE" "$KAFKA_CHART" \
-  --namespace "$PLATFORM_NAMESPACE" --create-namespace --take-ownership \
+  --namespace "$PLATFORM_NAMESPACE" --create-namespace \
   --wait --timeout "$PLATFORM_TIMEOUT"
 # Website orchestrator: its own chart and release, next to Kafka in the platform namespace
 helm upgrade --install "$WEBSITE_ORCHESTRATOR_RELEASE" "$WEBSITE_ORCHESTRATOR_CHART" \
-  --namespace "$PLATFORM_NAMESPACE" --take-ownership \
+  --namespace "$PLATFORM_NAMESPACE" \
   --set-string image="$WEBSITE_ORCHESTRATOR_IMAGE" \
   --set-string github.repository="$ORCHESTRATOR_REPOSITORY" \
   --set-string notification.webhookUrl="$NOTIFICATION_WEBHOOK_URL" \

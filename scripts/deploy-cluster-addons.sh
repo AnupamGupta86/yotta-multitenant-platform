@@ -7,7 +7,7 @@ REQUIRED_TOOLS=(helm kubectl)
 CALICO_CIDR='192.168.0.0/16'
 CALICO_NAMESPACE=tigera-operator
 CALICO_SYSTEM_NAMESPACE=calico-system
-INGRESS_NAMESPACE=ingress-nginx
+INGRESS_NAMESPACE=infrastructure
 METRICS_NAMESPACE=kube-system
 CERT_MANAGER_NAMESPACE=cert-manager
 CALICO_CRDS_CHART=helm/cluster-addons/calico-crds
@@ -79,13 +79,12 @@ helm_retry helm repo update "$INGRESS_REPOSITORY" "$METRICS_REPOSITORY"
   --set controller.hostPort.enabled=true \
   --set-string controller.nodeSelector.ingress-ready=true \
   --set-json 'controller.tolerations=[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]' \
-  --set controller.service.type=ClusterIP \
-  --take-ownership
+  --set controller.service.type=ClusterIP
 
 "$script_dir/helm-release.sh" "$METRICS_RELEASE" "$METRICS_REPOSITORY/metrics-server" \
   --version "$METRICS_SERVER_VERSION" \
   --namespace "$METRICS_NAMESPACE" --set-string 'args[0]=--kubelet-insecure-tls' \
-  --take-ownership --wait --timeout "$METRICS_TIMEOUT"
+  --wait --timeout "$METRICS_TIMEOUT"
 wait_for kubectl rollout status deployment/metrics-server --namespace "$METRICS_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
 
 "$script_dir/helm-release.sh" "$CERT_MANAGER_RELEASE" "$CERT_MANAGER_CHART" \
@@ -94,6 +93,5 @@ wait_for kubectl rollout status deployment/metrics-server --namespace "$METRICS_
 wait_for kubectl wait --for=condition=Available deployment --all --namespace "$CERT_MANAGER_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
 
 # Our ClusterIssuer (local-selfsigned) for every Ingress; needs the cert-manager CRDs installed just above.
-# --take-ownership adopts the issuer from the legacy platform release on the first run after the chart split.
 "$script_dir/helm-release.sh" "$CLUSTER_ISSUER_RELEASE" "$CLUSTER_ISSUER_CHART" \
-  --namespace "$CERT_MANAGER_NAMESPACE" --take-ownership --wait --timeout "$ROLLOUT_TIMEOUT"
+  --namespace "$CERT_MANAGER_NAMESPACE" --wait --timeout "$ROLLOUT_TIMEOUT"

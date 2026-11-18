@@ -27,7 +27,7 @@ case "${1:?usage: helm-releases.sh <kafka|logging|monitoring|orchestrator|hostin
     "$release_cmd" "$GRAFANA_DASHBOARDS_RELEASE_NAME" helm/monitoring/grafana-dashboards \
       --namespace "$OBSERVABILITY_NAMESPACE" --reset-then-reuse-values --wait --timeout "$SERVICE_HELM_TIMEOUT"
     ;;
-  orchestrator)  # needs IMAGE (website-orchestrator), GHCR_REPOSITORY; its own release since the chart split
+  orchestrator)  # needs IMAGE (website-orchestrator), GHCR_REPOSITORY
     "$release_cmd" "$WEBSITE_ORCHESTRATOR_RELEASE_NAME" helm/website-orchestrator-helm \
       --namespace "$PLATFORM_NAMESPACE" --create-namespace --reset-then-reuse-values \
       --set-string image="$IMAGE" \
