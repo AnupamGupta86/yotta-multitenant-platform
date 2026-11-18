@@ -28,7 +28,7 @@ All screenshots live in [`docs/proof/screenshots/`](proof/screenshots/). ✅ = c
 | 04 | `04-hpa-scaling.png` | 2 Scaling | HPA scale-out starts under load (2 → 6) | `kubectl get hpa -n user1 -w` + `scripts/load-test.py` | ✅ |
 | 05 | `05-hpa-scale-out-and-in.png` | 2 Scaling | full cycle 2 → 8 → 4; 22,585 requests, 0 failed | same | ✅ |
 | 06 | `06-grafana-request-rate.png` | 2 Scaling | request rate, HTTP 200 only, 100 % success during the load | Grafana dashboard | ✅ |
-| 06b | `06b-grafana-replicas-cpu.png` | 2 Scaling | panels "Website replicas" and "Website CPU usage by tenant" (optional) | Grafana dashboard, scroll down | ⏳ |
+| 06b | `06b-grafana-replicas-cpu.png` | 2 Scaling | panels "Website replicas: current vs desired (HPA)" and "CPU usage by pod" (optional) | Grafana dashboard, scroll down | ⏳ |
 | 07 | `07-actions-all-workflows.png` | 3 CI/CD | all CI/CD workflows, recent runs green | Actions tab | ✅ |
 | 08 | `08-ci-orchestrator-run.png` | 3 CI/CD | orchestrator CI: validate → publish, no leaks | a green CI run | ✅ |
 | 09 | `09-ci-provisioning-pipeline.png` | 3 CI/CD | chart-validation → validate → publish | a green CI run | ✅ |
@@ -136,7 +136,7 @@ is HTTP 200, and the success rate stays at 100 %.
 
 ![Grafana request rate during the load](proof/screenshots/06-grafana-request-rate.png)
 
-Still to add: the panels "Website replicas: current and desired" and "Website CPU usage by tenant" (lower on the same dashboard).
+Still to add: the panels "Website replicas: current vs desired (HPA)" and "CPU usage by pod" (rows CPU, lower on the same dashboard; Namespace = user1).
 
 ## 3. CI/CD with rollback and events
 
@@ -222,8 +222,9 @@ open https://grafana.myyotta.com:8443      # Grafana (admin / password in helm/m
 open https://prometheus.myyotta.com:8443   # Prometheus
 ```
 
-**Expect:** dashboard *Yotta Website Platform* with request rate by tenant/endpoint/status, success %,
-replicas (HPA), CPU, memory, restarts and database readiness per tenant; the standard
+**Expect:** dashboard *Yotta Website Platform* with **Namespace** and **Service** filters, and per-service pod
+count, readiness, restarts and their reasons, CPU (with throttling), memory (with % of limit), network, website
+request rate / success % / HPA replicas, database readiness and Loki logs with error counts; the standard
 *Kubernetes / Compute Resources* dashboards; **Explore → Loki** with `{namespace="user1"}` returns app logs.
 
 **Screenshots**

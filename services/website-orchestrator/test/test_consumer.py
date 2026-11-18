@@ -81,6 +81,20 @@ class DeploymentOrchestratorTests(unittest.TestCase):
         )
         self.assertEqual(notifications, [event])
 
+    def test_every_handled_event_logs_one_website_event_line(self):
+        event = {
+            "event_type": "WebsiteDeploymentFailed",
+            "event_id": "event-789",
+            "tenant": "user3",
+            "domain": "user3.example.com",
+        }
+        with self.assertLogs("website-orchestrator", level="INFO") as captured:
+            handle_event(event, dispatch=lambda _event: None, notify=lambda _event: None)
+        self.assertIn(
+            "WEBSITE_EVENT event_type=WebsiteDeploymentFailed tenant=user3 domain=user3.example.com event_id=event-789",
+            captured.output[0],
+        )
+
     def test_outcome_logs_a_notification_without_webhook_configuration(self):
         event = {
             "event_type": "WebsiteCreated",

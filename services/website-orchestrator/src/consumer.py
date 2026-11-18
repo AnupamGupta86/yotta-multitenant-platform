@@ -113,14 +113,16 @@ def handle_event(event, dispatch=dispatch_website, notify=notify_outcome):
     if missing:
         raise ValueError(f"{event_type} event is missing fields: {', '.join(missing)}")
 
+    # One line per website event in a fixed format: Grafana counts these in Loki
+    # (events by type and tenant on the Yotta Website Platform dashboard).
+    logger.info(
+        "WEBSITE_EVENT event_type=%s tenant=%s domain=%s event_id=%s",
+        event_type,
+        event["tenant"],
+        event["domain"],
+        event["event_id"],
+    )
     if event_type == REQUEST_EVENT:
-        logger.info(
-            "Received %s event_id=%s tenant=%s domain=%s",
-            event_type,
-            event["event_id"],
-            event["tenant"],
-            event["domain"],
-        )
         dispatch(event)
     else:
         notify(event)

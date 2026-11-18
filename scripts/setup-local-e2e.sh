@@ -88,11 +88,11 @@ if [[ -z "${ORCHESTRATOR_REPOSITORY:-}" ]]; then
   export ORCHESTRATOR_REPOSITORY
 fi
 
-# The orchestrator needs a GitHub token to start the Website App Deployment workflow.
-# GitHub never returns the value of a repository secret, so the token is taken, in this order, from:
-#   1. ORCHESTRATOR_GITHUB_TOKEN, if already set;
-#   2. the GitHub CLI login on this Mac (`gh auth token`), if it can reach this repository's workflows;
-#   3. a prompt.
+ The orchestrator needs a GitHub token to start the Website App Deployment workflow.
+ GitHub never returns the value of a repository secret, so the token is taken, in this order, from:
+   1. ORCHESTRATOR_GITHUB_TOKEN, if already set;
+   2. the GitHub CLI login on this Mac (`gh auth token`), if it can reach this repository's workflows;
+   3. a prompt.
 if [[ -z "${ORCHESTRATOR_GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
   gh_token="$(gh auth token 2>/dev/null || true)"
   if [[ -n "$gh_token" ]] && GH_TOKEN="$gh_token" gh api "repos/$ORCHESTRATOR_REPOSITORY/actions/workflows" --silent 2>/dev/null; then
@@ -120,20 +120,20 @@ echo "Checking chart definitions..."
 helm lint "$PROVISIONING_CHART"
 helm lint "$WEBSITE_CHART"
 
-if kind get clusters | grep -qx "$CLUSTER_NAME"; then
-  echo "WARNING: deleting Kind cluster $CLUSTER_NAME permanently removes its workloads and stored demo data."
-  if [[ ! -t 0 ]]; then
-    echo "Refusing to delete a cluster without an interactive confirmation. Run this script in a terminal and type: $CLUSTER_DELETE_CONFIRMATION" >&2
-    exit 2
-  fi
-  read -r -p "Type '$CLUSTER_DELETE_CONFIRMATION' to continue: " typed_confirmation
-  if [[ "$typed_confirmation" != "$CLUSTER_DELETE_CONFIRMATION" ]]; then
-    echo "Confirmation did not match; leaving cluster $CLUSTER_NAME untouched." >&2
-    exit 2
-  fi
-  echo "Deleting confirmed Kind cluster $CLUSTER_NAME..."
-  kind delete cluster --name "$CLUSTER_NAME"
-fi
+#if kind get clusters | grep -qx "$CLUSTER_NAME"; then
+#  echo "WARNING: deleting Kind cluster $CLUSTER_NAME permanently removes its workloads and stored demo data."
+#  if [[ ! -t 0 ]]; then
+#    echo "Refusing to delete a cluster without an interactive confirmation. Run this script in a terminal and type: $CLUSTER_DELETE_CONFIRMATION" >&2
+#    exit 2
+#  fi
+#  read -r -p "Type '$CLUSTER_DELETE_CONFIRMATION' to continue: " typed_confirmation
+#  if [[ "$typed_confirmation" != "$CLUSTER_DELETE_CONFIRMATION" ]]; then
+#    echo "Confirmation did not match; leaving cluster $CLUSTER_NAME untouched." >&2
+#    exit 2
+#  fi
+#  echo "Deleting confirmed Kind cluster $CLUSTER_NAME..."
+#  kind delete cluster --name "$CLUSTER_NAME"
+#fi
 
 echo "Creating a fresh Kind cluster and installing add-ons, monitoring, and platform..."
 CLUSTER_NAME="$CLUSTER_NAME" "$SETUP_KIND_SCRIPT"

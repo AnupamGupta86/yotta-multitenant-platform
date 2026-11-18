@@ -68,7 +68,7 @@ yotta-multitenant-platform/
 │   │                             servicemonitor, event-publisher-test (Helm test sending WebsiteCreated)
 │   ├── website-provisioning/     Provisioning API + its PostgreSQL + Ingress
 │   ├── platform/                 Shared services
-│   │   ├── templates/            kafka, website-orchestrator, loki, fluentd, cluster-issuer (TLS),
+│   │   ├── templates/            kafka, kafka-exporter (Kafka metrics), website-orchestrator, loki, fluentd, cluster-issuer (TLS),
 │   │   │                         dashboard (Grafana ConfigMap), notification-secret (optional webhook)
 │   │   └── files/                fluent.conf (log shipping), website-dashboard.json (Grafana dashboard)
 │   ├── monitoring/               kube-prometheus-stack values, pinned chart version, .trivyignore
@@ -88,6 +88,8 @@ yotta-multitenant-platform/
 │   ├── helm-retry.sh             Retry wrapper for transient Helm/network errors
 │   ├── check-docker.sh           Setup: Docker engine reachable (starts Colima, sizes it, fixes context, inotify)
 │   ├── check-routes.sh           Every Ingress host answers 200, no duplicate hosts, no pod on an old image
+│   ├── kafka-events.sh           Website status per tenant from Kafka events (--watch: live)
+│   ├── generate-dashboard.py     Writes the Grafana dashboard JSON (helm/platform/files/website-dashboard.json)
 │   ├── helm-release.sh           HELM_MODE=apply: helm upgrade --install; HELM_MODE=diff: coloured diff for review
 │   ├── load-test.py              CPU load generator for the HPA demo
 │   ├── collect-proof.sh          Proof-of-work evidence for all five assignment items
@@ -403,6 +405,7 @@ gh run list --workflow website_app_cd.yml --limit 3
 | Change the e-mail login or recipients | `gh secret set SMTP_USERNAME` / `SMTP_PASSWORD` / `REPORT_EMAIL_TO --env aiops-deployment`, then re-run `aiops_pod_doctor_cd.yml` |
 | Add a reviewer | `./scripts/setup-deployment-approvals.sh <login> [<login>...]` |
 | See what is deployed | `helm list -A`; `kubectl get deploy -A -o wide` |
+| Status of every website from Kafka (live) | `./scripts/kafka-events.sh --watch` |
 | Check every route and find stale pods | `./scripts/check-routes.sh` (also runs at the end of `setup-local-e2e.sh`) |
 | Collect proof of work | `./scripts/collect-proof.sh` ([proof-of-work.md](proof-of-work.md)) |
 

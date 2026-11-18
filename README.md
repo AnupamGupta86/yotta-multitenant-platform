@@ -151,8 +151,14 @@ for outcomes (optionally also to `NOTIFICATION_WEBHOOK_URL`). Events share a `co
 ## Observability
 
 - **Metrics:** Prometheus scrapes each tenant's `/metrics` (ServiceMonitor) plus cluster metrics.
-- **Dashboards:** Grafana dashboard *Yotta Website Platform*: request rate per tenant/endpoint/status,
-  success %, replicas, CPU, memory, restarts, database readiness.
+- **Dashboards:** Grafana dashboard *Yotta Website Platform*, filtered by **Namespace** (`platform`, `aiops`,
+  `observability`, `user1`, `user2`...) and **Service** (container: `website-app`, `postgres`, `kafka`...). Rows:
+  overview (running/not ready/waiting containers, restarts, CPU and memory use), pods and health (ready pods, restarts,
+  why a container is not running), CPU (usage, % of limit, throttling, HPA replicas), memory (working set, % of limit),
+  network, website traffic (rate by tenant/status/endpoint, success %), **Kafka and website events** (brokers up,
+  messages per topic, orchestrator consumer lag, events requested/created/failed by type and tenant, event log),
+  databases, and Loki logs with error counts. Kafka metrics come from `kafka-exporter` (platform chart);
+  edit the dashboard in `scripts/generate-dashboard.py`.
   Grafana https://grafana.myyotta.com:8443 (user `admin`), Prometheus https://prometheus.myyotta.com:8443 and
   Alertmanager https://alertmanager.myyotta.com:8443, through the same ingress as the websites (no extra ports).
 - **Logs:** Fluentd ships all pod logs to Loki; search them in Grafana → Explore → Loki.

@@ -8,6 +8,7 @@ dashboard:
 images:
   websiteOrchestrator: yotta/website-orchestrator:local
   kafka: apache/kafka:4.4.0
+  kafkaExporter: danielqsj/kafka-exporter:v1.9.0
   loki: grafana/loki:3.2.1
   fluentd: yotta/fluentd-loki:local
 kafka:
@@ -60,6 +61,17 @@ orchestrator:
   resources:
     requests: {cpu: 25m, memory: 64Mi}
     limits: {cpu: 250m, memory: 192Mi}
+kafkaExporter:
+  enabled: true
+  name: kafka-exporter
+  port: 9308
+  # Protocol version the exporter speaks; Kafka 4.x no longer accepts the exporter's 2.0 default
+  kafkaProtocolVersion: "3.6.0"
+  serviceMonitorRelease: prometheus
+  scrapeInterval: 30s
+  resources:
+    requests: {cpu: 10m, memory: 24Mi}
+    limits: {cpu: 100m, memory: 64Mi}
 notification:
   secretName: notification-webhook
   webhookUrl: ""
