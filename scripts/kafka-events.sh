@@ -23,8 +23,10 @@ kubectl exec -i -n "$NAMESPACE" "$POD" -- /opt/kafka/bin/kafka-console-consumer.
 import datetime, json, os, select, sys
 
 STATUS = {"WebsiteProvisioningRequested": "REQUESTED", "WebsiteCreated": "LIVE",
-          "WebsiteDeploymentFailed": "FAILED"}
-COLOUR = {"REQUESTED": "\033[33m", "LIVE": "\033[32m", "FAILED": "\033[31m"}
+          "WebsiteDeploymentFailed": "FAILED", "WebsiteDeletionRequested": "DELETING",
+          "WebsiteDeleted": "DELETED"}
+COLOUR = {"REQUESTED": "\033[33m", "LIVE": "\033[32m", "FAILED": "\033[31m", "DELETING": "\033[35m",
+          "DELETED": "\033[90m"}
 watch = os.environ.get("WATCH") == "true" and sys.stdout.isatty()
 latest, count = {}, {}
 

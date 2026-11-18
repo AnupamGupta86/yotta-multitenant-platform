@@ -10,34 +10,48 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("website-orchestrator")
 REQUEST_EVENT = "WebsiteProvisioningRequested"
 OUTCOME_EVENTS = {"WebsiteCreated", "WebsiteDeploymentFailed"}
+DELETION_EVENT = "WebsiteDeletionRequested"
+DELETED_EVENT = "WebsiteDeleted"
+HANDLED_EVENTS = {REQUEST_EVENT, DELETION_EVENT, DELETED_EVENT} | OUTCOME_EVENTS
 
 
 def dispatch_website(event, environ=None):
+    """Start Website Deployment for a provisioning request."""
     environ = environ or os.environ
+    inputs = {
+        "tenant": event["tenant"],
+        "domain": event["domain"],
+        "image_tag": event.get("image_tag", ""),  # empty: the workflow deploys the newest image
+        "correlation_id": event["event_id"],
+    }
+    _dispatch_workflow(event, environ, environ.get("GH_WORKFLOW_NAME", "website_cd.yml"), inputs, "deployment")
+
+
+def dispatch_teardown(event, environ=None):
+    """Start Website Teardown (helm uninstall + namespace delete, after approval) for a deletion request."""
+    environ = environ or os.environ
+    inputs = {"tenant": event["tenant"], "domain": event["domain"], "correlation_id": event["event_id"]}
+    _dispatch_workflow(
+        event, environ, environ.get("GH_TEARDOWN_WORKFLOW_NAME", "website_teardown.yml"), inputs, "teardown"
+    )
+
+
+def _dispatch_workflow(event, environ, workflow, inputs, purpose):
     if environ.get("ORCHESTRATOR_DRY_RUN", "false").lower() == "true":
-        logger.info("Dry run: would deploy tenant=%s domain=%s", event["tenant"], event["domain"])
+        logger.info("Dry run: would start %s workflow=%s tenant=%s", purpose, workflow, event["tenant"])
         return
 
     token = environ.get("GH_TOKEN")
     repository = environ.get("GH_REPOSITORY")
-    workflow = environ.get("GH_WORKFLOW_NAME", "website_app_cd.yml")
     ref = environ.get("GH_REF", "master")
     if not token or not repository or "/" not in repository:
-        raise RuntimeError("GH_TOKEN and GH_REPOSITORY are required to start a deployment")
+        raise RuntimeError(f"GH_TOKEN and GH_REPOSITORY are required to start a {purpose}")
 
     endpoint = (
         "https://api.github.com/repos/"
         f"{repository}/actions/workflows/{quote(workflow, safe='')}/dispatches"
     )
-    body = {
-        "ref": ref,
-        "inputs": {
-            "tenant": event["tenant"],
-            "domain": event["domain"],
-            "image_tag": event.get("image_tag", ""),  # empty: the workflow deploys the newest image
-            "correlation_id": event["event_id"],
-        },
-    }
+    body = {"ref": ref, "inputs": inputs}
     request = Request(
         endpoint,
         data=json.dumps(body).encode("utf-8"),
@@ -60,7 +74,8 @@ def dispatch_website(event, environ=None):
     except URLError as error:
         raise RuntimeError("GitHub workflow dispatch could not reach the API") from error
     logger.info(
-        "Started deployment workflow=%s ref=%s tenant=%s event_id=%s",
+        "Started %s workflow=%s ref=%s tenant=%s event_id=%s",
+        purpose,
         workflow,
         ref,
         event["tenant"],
@@ -72,6 +87,8 @@ def notify_outcome(event, environ=None):
     environ = environ or os.environ
     if event["event_type"] == "WebsiteCreated":
         message = f"Website {event['tenant']} is ready at https://{event['domain']}"
+    elif event["event_type"] == DELETED_EVENT:
+        message = f"Website {event['tenant']} ({event['domain']}) was deleted"
     else:
         message = f"Deployment failed for {event['tenant']} ({event['domain']})"
     webhook_url = environ.get("NOTIFICATION_WEBHOOK_URL")
@@ -100,11 +117,16 @@ def notify_outcome(event, environ=None):
     logger.info("Notification sent for event_id=%s", event.get("event_id"))
 
 
-def handle_event(event, dispatch=dispatch_website, notify=notify_outcome):
+def handle_event(event, dispatch=dispatch_website, notify=notify_outcome, teardown=dispatch_teardown, store=None):
+    """Process one website event. `store` (EventStore) records it in the platform database when configured.
+
+    Database writes come first and are safe to repeat, so a failed step (exception) leaves the Kafka
+    message uncommitted and the whole event is processed again.
+    """
     if not isinstance(event, dict):
         raise TypeError("Kafka event must be a JSON object")
     event_type = event.get("event_type")
-    if event_type not in ({REQUEST_EVENT} | OUTCOME_EVENTS):
+    if event_type not in HANDLED_EVENTS:
         logger.info("Ignoring event_type=%s", event_type or "missing")
         return
 
@@ -123,9 +145,32 @@ def handle_event(event, dispatch=dispatch_website, notify=notify_outcome):
         event["event_id"],
     )
     if event_type == REQUEST_EVENT:
+        if store:
+            store.record_dispatch(event)
         dispatch(event)
-    else:
+    elif event_type == DELETION_EVENT:
+        teardown(event)
+    elif event_type == DELETED_EVENT:
+        if store:
+            store.remove_website(event)
         notify(event)
+    else:
+        if store:
+            store.record_outcome(event)
+        notify(event)
+
+
+def event_store(environ=None):
+    """The platform database store, or None (with a warning) when the database is not configured yet."""
+    from src.store import EventStore, database_url
+
+    url = database_url(environ)
+    if url is None:
+        logger.warning("Platform database not configured (DB_* settings); events are not recorded in it")
+        return None
+    import psycopg
+
+    return EventStore(lambda: psycopg.connect(url, connect_timeout=5))
 
 
 def main():
@@ -135,6 +180,7 @@ def main():
     servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     topic = os.environ.get("KAFKA_TOPIC", "website-events")
     group_id = os.environ.get("KAFKA_GROUP_ID", "website-orchestrator")
+    store = event_store()
     while True:
         consumer = None
         try:
@@ -154,7 +200,7 @@ def main():
                     if not messages:
                         continue
                     message = messages[0]
-                    handle_event(message.value)
+                    handle_event(message.value, store=store)
                     partition = TopicPartition(message.topic, message.partition)
                     consumer.commit({partition: OffsetAndMetadata(message.offset + 1, "")})
         except Exception:

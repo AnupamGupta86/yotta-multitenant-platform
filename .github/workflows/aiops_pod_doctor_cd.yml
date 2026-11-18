@@ -37,7 +37,7 @@ jobs:
       - name: Validate the AIOps chart
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          bash .github/scripts/validate-chart.sh "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm --namespace "$AIOPS_NAMESPACE" \
+          bash .github/scripts/validate-chart.sh "$AIOPS_DEPLOYMENT" aiops-pod-doctor/aiops-pod-doctor-helm --namespace "$AIOPS_NAMESPACE" \
             --set-string image.repository="$CONTAINER_REGISTRY/$owner/$AIOPS_IMAGE" --set-string image.tag="$IMAGE_TAG" \
             --set-string grok.existingSecret="$AIOPS_GROK_SECRET" --set-string email.existingSecret="$AIOPS_SMTP_SECRET"
   review-changes:
@@ -68,7 +68,7 @@ jobs:
       - name: Choose the image
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$$AIOPS_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$AIOPS_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
       - name: "Changes: aiops-pod-doctor release (deployed vs new)"
         run: .github/scripts/helm-releases.sh aiops
       - uses: actions/upload-artifact@v6

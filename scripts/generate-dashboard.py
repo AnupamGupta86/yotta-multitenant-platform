@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the Grafana dashboard "Yotta Website Platform" (helm/platform/files/website-dashboard.json).
+"""Generate the Grafana dashboard "Yotta Website Platform" (helm/monitoring/grafana-dashboards/files/website-dashboard.json).
 
 Edit the panels here, then run from the repository root:  python3 scripts/generate-dashboard.py
 Filters: Namespace and Service (container). Rows: overview, pods and health, CPU, memory, network,
@@ -201,7 +201,7 @@ templating = {"list": [
     {"name": "namespace", "label": "Namespace (service area / website)", "type": "query", "datasource": PROM,
      "query": {"query": "label_values(kube_pod_info, namespace)", "refId": "namespace"},
      "definition": "label_values(kube_pod_info, namespace)",
-     "regex": "/^(?!kube-|calico-|tigera-|cert-manager|ingress-nginx|local-path|default$).*/",
+     "regex": "/^(?!kube-|calico-|tigera-|cert-manager|infrastructure|local-path|default$).*/",
      "multi": True, "includeAll": True, "refresh": 2, "sort": 1,
      "current": {"selected": True, "text": ["All"], "value": ["$__all"]}},
     {"name": "service", "label": "Service (container)", "type": "query", "datasource": PROM,
@@ -219,5 +219,5 @@ dashboard = {
     "timezone": "browser", "editable": True, "graphTooltip": 1,
     "templating": templating, "panels": panels,
 }
-json.dump(dashboard, open("helm/platform/files/website-dashboard.json", "w"), indent=2)
+json.dump(dashboard, open("helm/monitoring/grafana-dashboards/files/website-dashboard.json", "w"), indent=2)
 print(len(panels), "panels; last y =", y)

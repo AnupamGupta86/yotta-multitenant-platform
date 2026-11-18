@@ -1,0 +1,2 @@
+# Not part of the chart: the Fluentd image is built from image/ by Platform CI
+image/

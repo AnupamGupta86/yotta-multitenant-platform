@@ -75,7 +75,7 @@ Any SMTP account works. With **Gmail** (needs 2-Step Verification on the account
 | Path | |
 |---|---|
 | `service/` | Python code, unit tests, Dockerfile |
-| `helm/` | CronJob, read-only ServiceAccount/ClusterRole, Role for the state ConfigMap |
+| `aiops-pod-doctor-helm/` | CronJob, read-only ServiceAccount/ClusterRole, Role for the state ConfigMap |
 | `scripts/run-report-job.sh` | starts one report run now (instead of waiting for the next minute) and shows its log |
 
 The workflows live in `.github/workflows/aiops_pod_doctor_ci.yml` and `aiops_pod_doctor_cd.yml`.
@@ -127,11 +127,11 @@ Helm values: `cronjob.schedule` (default `* * * * *`, every minute), `email.*`, 
 gh workflow run aiops_pod_doctor_cd.yml --ref master -f image_tag=<tag>
 
 # Break one of your own apps (old pods keep serving), get the e-mail within a minute
-kubectl set image deployment/user1-app website-app=ghcr.io/anupamgupta86/website-app:does-not-exist -n user1
+kubectl set image deployment/user1-website website=ghcr.io/anupamgupta86/website:does-not-exist -n user1
 kubectl get jobs -n aiops -w                              # a run every minute
 kubectl logs -n aiops job/<latest job>                    # the report it e-mailed
 kubectl get configmap aiops-pod-doctor-state -n aiops -o yaml   # what was already e-mailed
-kubectl rollout undo deployment/user1-app -n user1        # fix it yourself (the doctor only reports)
+kubectl rollout undo deployment/user1-website -n user1        # fix it yourself (the doctor only reports)
 
 aiops-pod-doctor/scripts/run-report-job.sh                # start a run now instead of waiting
 

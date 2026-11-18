@@ -5,9 +5,10 @@
 #   environment                       used by
 #   platform-deployment               platform_cd.yml               (add-ons, platform chart, monitoring)
 #   website-orchestrator-deployment   website_orchestrator_cd.yml
-#   website-provisioning-deployment   website_provisioning_cd.yml
-#   website-app-deployment            website_app_cd.yml            (one run per tenant website)
+#   hosting-platform-deployment   hosting_platform_cd.yml
+#   website-deployment            website_cd.yml            (one run per tenant website)
 #   aiops-deployment                  aiops_pod_doctor_cd.yml       (also holds GROK_API_KEY and the SMTP_* / REPORT_EMAIL_TO secrets)
+#   database-deployment               database_cd.yml               (platform database myyotta-postgresql)
 #
 # Deployments are only allowed from master, feature and feature/* (the same branches the CD jobs accept).
 # Safe to run again: it updates the environments in place.
@@ -31,7 +32,8 @@ for login in "${reviewers[@]}"; do
 done
 
 for environment in platform-deployment website-orchestrator-deployment \
-                   website-provisioning-deployment website-app-deployment aiops-deployment; do
+                   hosting-platform-deployment website-deployment aiops-deployment \
+                   database-deployment; do
   # prevent_self_review=false: with a single maintainer, the person who starts a run must be
   # allowed to approve it, or nothing could ever be deployed
   gh api --method PUT "repos/$repo/environments/$environment" --input - >/dev/null <<JSON

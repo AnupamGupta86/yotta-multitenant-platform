@@ -37,10 +37,10 @@ def main():
     parser = argparse.ArgumentParser(description="Publish a website lifecycle event")
     parser.add_argument("--tenant", required=True)
     parser.add_argument("--domain", required=True)
-    parser.add_argument("--image", required=True)
+    parser.add_argument("--image", default="", help="Deployed image (empty for WebsiteDeleted)")
     parser.add_argument(
         "--event-type",
-        choices=("WebsiteProvisioningRequested", "WebsiteCreated", "WebsiteDeploymentFailed"),
+        choices=("WebsiteProvisioningRequested", "WebsiteCreated", "WebsiteDeploymentFailed", "WebsiteDeleted"),
         default="WebsiteCreated",
     )
     parser.add_argument("--correlation-id")

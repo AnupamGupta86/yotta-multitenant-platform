@@ -9,22 +9,28 @@ DEFAULT_TENANTS=(user1)
 DEFAULT_DOMAIN_SUFFIX="${DEFAULT_DOMAIN_SUFFIX:-myyotta.com}"
 CLUSTER_NAME="${CLUSTER_NAME:-yotta-platform}"
 CLUSTER_DELETE_CONFIRMATION="delete ${CLUSTER_NAME}"
-PROVISIONING_HOST="${PROVISIONING_HOST:-provisioning.myyotta.com}"
+PROVISIONING_HOST="${PROVISIONING_HOST:-api.myyotta.com}"
 OBSERVABILITY_HOSTS=(grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com)
 # One new tag for every image of this run (see setup-kind.sh): a changed tag always rolls the pods,
 # so no pod keeps serving an image from an earlier run.
 LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-local-$(date -u +%Y%m%d%H%M%S)}"
 export LOCAL_IMAGE_TAG
-PROVISIONING_IMAGE="${PROVISIONING_IMAGE:-yotta/website-provisioning:$LOCAL_IMAGE_TAG}"
-WEBSITE_IMAGE="${WEBSITE_IMAGE:-yotta/website-app:$LOCAL_IMAGE_TAG}"
+PROVISIONING_IMAGE="${PROVISIONING_IMAGE:-yotta/hosting-platform:$LOCAL_IMAGE_TAG}"
+WEBSITE_IMAGE="${WEBSITE_IMAGE:-yotta/website:$LOCAL_IMAGE_TAG}"
 WEBSITE_ORCHESTRATOR_IMAGE="${WEBSITE_ORCHESTRATOR_IMAGE:-yotta/website-orchestrator:$LOCAL_IMAGE_TAG}"
-PROVISIONING_CHART="${PROVISIONING_CHART:-helm/website-provisioning}"
-WEBSITE_CHART="${WEBSITE_CHART:-helm/website-app}"
-PROVISIONING_BUILD_CONTEXT="${PROVISIONING_BUILD_CONTEXT:-services/website-provisioning}"
-WEBSITE_BUILD_CONTEXT="${WEBSITE_BUILD_CONTEXT:-services/website-app}"
-PROVISIONING_RELEASE="${PROVISIONING_RELEASE:-website-provisioning}"
+DATABASE_IMAGE="${DATABASE_IMAGE:-myyotta-postgresql:$LOCAL_IMAGE_TAG}"
+DATABASE_BUILD_CONTEXT=services/database
+DATABASE_CHART=helm/database-helm
+DATABASE_RELEASE=myyotta-postgresql
+DATABASE_NAMESPACE=platform-data
+DATABASE_TIMEOUT=10m
+PROVISIONING_CHART="${PROVISIONING_CHART:-helm/hosting-platform-helm}"
+WEBSITE_CHART="${WEBSITE_CHART:-helm/website-helm}"
+PROVISIONING_BUILD_CONTEXT="${PROVISIONING_BUILD_CONTEXT:-services/hosting-platform}"
+WEBSITE_BUILD_CONTEXT="${WEBSITE_BUILD_CONTEXT:-services/website}"
+PROVISIONING_RELEASE="${PROVISIONING_RELEASE:-hosting-platform}"
 PLATFORM_NAMESPACE="${PLATFORM_NAMESPACE:-platform}"
-PROVISIONING_DEPLOYMENT="${PROVISIONING_DEPLOYMENT:-website-provisioning}"
+PROVISIONING_DEPLOYMENT="${PROVISIONING_DEPLOYMENT:-hosting-platform}"
 PROVISIONING_ROLLOUT_TIMEOUT="${PROVISIONING_ROLLOUT_TIMEOUT:-5m}"
 PROVISIONING_HELM_TIMEOUT="${PROVISIONING_HELM_TIMEOUT:-10m}"
 LOCAL_HTTPS_PORT="${LOCAL_HTTPS_PORT:-8443}"
@@ -88,11 +94,11 @@ if [[ -z "${ORCHESTRATOR_REPOSITORY:-}" ]]; then
   export ORCHESTRATOR_REPOSITORY
 fi
 
- The orchestrator needs a GitHub token to start the Website App Deployment workflow.
- GitHub never returns the value of a repository secret, so the token is taken, in this order, from:
-   1. ORCHESTRATOR_GITHUB_TOKEN, if already set;
-   2. the GitHub CLI login on this Mac (`gh auth token`), if it can reach this repository's workflows;
-   3. a prompt.
+# The orchestrator needs a GitHub token to start the Website Deployment workflow.
+# GitHub never returns the value of a repository secret, so the token is taken, in this order, from:
+#   1. ORCHESTRATOR_GITHUB_TOKEN, if already set;
+#   2. the GitHub CLI login on this Mac (`gh auth token`), if it can reach this repository's workflows;
+#   3. a prompt.
 if [[ -z "${ORCHESTRATOR_GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
   gh_token="$(gh auth token 2>/dev/null || true)"
   if [[ -n "$gh_token" ]] && GH_TOKEN="$gh_token" gh api "repos/$ORCHESTRATOR_REPOSITORY/actions/workflows" --silent 2>/dev/null; then
@@ -120,23 +126,35 @@ echo "Checking chart definitions..."
 helm lint "$PROVISIONING_CHART"
 helm lint "$WEBSITE_CHART"
 
-#if kind get clusters | grep -qx "$CLUSTER_NAME"; then
-#  echo "WARNING: deleting Kind cluster $CLUSTER_NAME permanently removes its workloads and stored demo data."
-#  if [[ ! -t 0 ]]; then
-#    echo "Refusing to delete a cluster without an interactive confirmation. Run this script in a terminal and type: $CLUSTER_DELETE_CONFIRMATION" >&2
-#    exit 2
-#  fi
-#  read -r -p "Type '$CLUSTER_DELETE_CONFIRMATION' to continue: " typed_confirmation
-#  if [[ "$typed_confirmation" != "$CLUSTER_DELETE_CONFIRMATION" ]]; then
-#    echo "Confirmation did not match; leaving cluster $CLUSTER_NAME untouched." >&2
-#    exit 2
-#  fi
-#  echo "Deleting confirmed Kind cluster $CLUSTER_NAME..."
-#  kind delete cluster --name "$CLUSTER_NAME"
-#fi
+if kind get clusters | grep -qx "$CLUSTER_NAME"; then
+  echo "WARNING: deleting Kind cluster $CLUSTER_NAME permanently removes its workloads and stored demo data."
+  if [[ ! -t 0 ]]; then
+    echo "Refusing to delete a cluster without an interactive confirmation. Run this script in a terminal and type: $CLUSTER_DELETE_CONFIRMATION" >&2
+    exit 2
+  fi
+  read -r -p "Type '$CLUSTER_DELETE_CONFIRMATION' to continue: " typed_confirmation
+  if [[ "$typed_confirmation" != "$CLUSTER_DELETE_CONFIRMATION" ]]; then
+    echo "Confirmation did not match; leaving cluster $CLUSTER_NAME untouched." >&2
+    exit 2
+  fi
+  echo "Deleting confirmed Kind cluster $CLUSTER_NAME..."
+  kind delete cluster --name "$CLUSTER_NAME"
+fi
 
 echo "Creating a fresh Kind cluster and installing add-ons, monitoring, and platform..."
 CLUSTER_NAME="$CLUSTER_NAME" "$SETUP_KIND_SCRIPT"
+
+echo "Building and deploying the platform database (myyotta_platform)..."
+docker build -t "$DATABASE_IMAGE" "$DATABASE_BUILD_CONTEXT"
+kind load docker-image "$DATABASE_IMAGE" --name "$CLUSTER_NAME"
+helm upgrade --install "$DATABASE_RELEASE" "$DATABASE_CHART" \
+  --namespace "$DATABASE_NAMESPACE" --create-namespace \
+  --set-string "image.repository=${DATABASE_IMAGE%:*}" \
+  --set-string "image.tag=${DATABASE_IMAGE##*:}" \
+  --wait --timeout "$DATABASE_TIMEOUT"
+# Provisioning API and orchestrator (namespace platform) read the password from their own namespace
+"$script_dir/copy-database-secret.sh" "$PLATFORM_NAMESPACE"
+kubectl rollout restart deployment/website-orchestrator --namespace "$PLATFORM_NAMESPACE"
 
 echo "Building and loading the local Provisioning API image..."
 docker build -t "$PROVISIONING_IMAGE" "$PROVISIONING_BUILD_CONTEXT"

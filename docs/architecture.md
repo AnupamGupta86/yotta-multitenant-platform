@@ -18,7 +18,7 @@ sequenceDiagram
     API->>Kafka: Publish WebsiteProvisioningRequested
     API-->>User: 202 Accepted with event ID
     Kafka->>Orchestrator: WebsiteProvisioningRequested
-    Orchestrator->>Actions: Dispatch website_app_cd.yml
+    Orchestrator->>Actions: Dispatch website_cd.yml
     Actions->>Helm: Install or upgrade tenant chart
     Helm-->>Actions: HTTPS check and Helm test
     Actions->>Kafka: WebsiteCreated or WebsiteDeploymentFailed
@@ -27,7 +27,7 @@ sequenceDiagram
 
 ## What runs in Kubernetes
 
-The Helm `platform` release installs Kafka, the Python deployment orchestrator, Loki, Fluentd, the local ClusterIssuer, and the Grafana dashboard. The `website-provisioning` API and its private PostgreSQL database are a separate Helm release installed by the Day 0 GitHub Actions workflow.
+Shared services are separate Helm releases, one per lifecycle: `kafka` (Kafka + kafka-exporter, namespace `platform`, `helm/kafka-helm`), `logging` (Loki + Fluentd, namespace `observability`, `helm/logging-helm`), `grafana-dashboards` next to Grafana (`helm/monitoring/grafana-dashboards`), and `cluster-issuer` next to cert-manager (`helm/cluster-addons/cluster-issuer`). The Python deployment orchestrator is its own release (`website-orchestrator`, `helm/website-orchestrator-helm`) next to Kafka. The `hosting-platform` API is a separate release too; all services keep their data in the shared platform database.
 
 Each website has a separate namespace and Helm release. Its release contains the Flask website (served by gunicorn), private PostgreSQL StatefulSet with a persistent volume claim, generated database Secret, Ingress, ServiceMonitor, HPA, PDB, quota, LimitRange, and NetworkPolicies. Tenants do not share databases. The Provisioning API also has its own PostgreSQL database and persistent volume.
 
@@ -35,9 +35,11 @@ Helm owns Kubernetes resources. `kubectl` is used for read-only checks, logs, po
 
 ## Request and event handling
 
-The FastAPI `website-provisioning` service exposes `POST /api/v1/websites`. It accepts a DNS-safe tenant name and domain, stores the metadata and a stable event ID in its own PostgreSQL database, then publishes `WebsiteProvisioningRequested` to Kafka. Repeating an accepted request for the same tenant and domain returns the same event ID; reusing either value for a different request returns a conflict.
+All platform services share one database, `myyotta_platform` (PostgreSQL 16, release `myyotta-postgresql` in `platform-data`; schema in `services/database/init`). Tenants no longer run their own PostgreSQL. Each service reads the password from a copy of the Secret in its own namespace (`scripts/copy-database-secret.sh`), and the database's NetworkPolicy only admits pods labelled `myyotta.io/database-client: "true"`.
 
-The orchestrator uses a stable Kafka consumer group and commits an offset only after GitHub accepts the workflow dispatch. It dispatches the `website_app_cd.yml` workflow with the tenant, domain, image, and correlation ID. If dispatch fails, it leaves the event uncommitted and retries. The website API CI builds and publishes images independently; provisioning API deployment is a separate manual pipeline.
+The FastAPI `hosting-platform` service registers users (`POST /api/v1/users/register`, salted scrypt hashes) and exposes `POST/GET/DELETE /api/v1/websites` without login; a website names its owner by e-mail. A request stores the website, its platform domain, default configuration and a request event in one transaction, then publishes `WebsiteProvisioningRequested` to Kafka and marks the event published. Repeating an accepted request returns the same event ID; reusing a tenant or domain for another request returns a conflict. `DELETE` marks the website `DELETING` and publishes `WebsiteDeletionRequested`; the orchestrator starts the *Website Teardown* workflow (approval, `helm uninstall`, namespace delete), which publishes `WebsiteDeleted`, and the orchestrator then removes the record. The orchestrator also records every deployment outcome (`deployments`, `deployment_events`) and keeps `websites.status` current (`PENDING → PROVISIONING → ACTIVE / FAILED → DELETING`).
+
+The orchestrator uses a stable Kafka consumer group and commits an offset only after GitHub accepts the workflow dispatch. It dispatches the `website_cd.yml` workflow with the tenant, domain, image, and correlation ID. If dispatch fails, it leaves the event uncommitted and retries. The website API CI builds and publishes images independently; provisioning API deployment is a separate manual pipeline.
 
 After Helm installs the tenant, the HTTPS health check must pass. The chart's Helm test then publishes `WebsiteCreated`. If installation, health checks, or the Helm test fail, the deployment script rolls back and the Actions workflow publishes `WebsiteDeploymentFailed`. The website orchestrator sends a short notification to logs (also collected by Fluentd and Loki), or to an optional configured webhook. Only `WebsiteProvisioningRequested` starts a deployment.
 

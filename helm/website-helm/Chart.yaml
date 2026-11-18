@@ -1,0 +1,6 @@
+apiVersion: v2
+name: website
+description: One tenant's website (Flask) with its own PostgreSQL, Ingress/TLS, HPA, quota, PDB and network policies
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

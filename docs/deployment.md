@@ -24,41 +24,44 @@ export ORCHESTRATOR_GITHUB_TOKEN=your-fine-grained-token
 ./scripts/setup-kind.sh
 ```
 
-The setup script installs cluster add-ons through Helm and installs the platform release. The platform includes Kafka and the deployment orchestrator, but it intentionally does not install the Provisioning API.
+The setup script installs the cluster add-ons (including the `cluster-issuer` chart), monitoring with the `grafana-dashboards` chart, the `logging` and `kafka` charts, and the website orchestrator through Helm. It intentionally does not install the Provisioning API.
 
 ## 2. Install the Day 0 Provisioning API
 
-From GitHub Actions, run **Website Provisioning Deployment** on `master` and provide the published `image_tag`. The workflow validates the chart, then pulls the selected image and installs or upgrades the `website-provisioning` Helm release in the `platform` namespace on the self-hosted Mac runner. Changes to the service run CI and publish an image; deployment remains manual.
+From GitHub Actions, run **Hosting Platform Deployment** on `master` and provide the published `image_tag`. The workflow validates the chart, then pulls the selected image and installs or upgrades the `hosting-platform` Helm release in the `platform` namespace on the self-hosted Mac runner. Changes to the service run CI and publish an image; deployment remains manual.
 
 The provisioning release owns a separate PostgreSQL StatefulSet, persistent volume, and random password Secret. If your Kind cluster has no default storage class, set one in the chart values before installing it.
 
 ## 3. Submit a request
 
-The platform Ingress serves the Provisioning API at `provisioning.myyotta.com`. Each tenant has its own Ingress host, created by the tenant Helm release. For local Kind testing, add these entries to `/etc/hosts` on the Mac:
+The hosting-platform Ingress serves the API at `api.myyotta.com`. Each tenant has its own Ingress host, created by the tenant Helm release. For local Kind testing, add these entries to `/etc/hosts` on the Mac:
 
 ```text
-127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com
+127.0.0.1 api.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com
 ```
 
 Kind maps HTTPS to port `8443`, so use that port in local requests. The local certificate is self-signed; `curl -k` skips certificate verification during development.
 
-Submit a tenant and domain to the FastAPI endpoint:
+Register the owner once, then submit a tenant, domain and the owner's e-mail:
 
 ```sh
-curl -k -i -X POST https://provisioning.myyotta.com:8443/api/v1/websites \
+curl -k -X POST https://api.myyotta.com:8443/api/v1/users/register \
   -H 'Content-Type: application/json' \
-  -d '{"tenant":"user4","domain":"user4.myyotta.com"}'
+  -d '{"username":"alice","email":"alice@example.com","password":"correct-horse-1"}'   # once: the owner
+curl -k -i -X POST https://api.myyotta.com:8443/api/v1/websites \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant":"user4","domain":"user4.myyotta.com","email":"alice@example.com"}'
 ```
 
-The API returns `202 Accepted` and an event ID. It stores the request before publishing `WebsiteProvisioningRequested`. The orchestrator consumes that event and dispatches **Website App Deployment**. The workflow installs the tenant chart with the requested domain, creating its host rule automatically; no DNS or Ingress edit is needed for each tenant while testing locally.
+The API returns `202 Accepted` and an event ID. It stores the website, its domain, its default configuration and the request event in the platform database (`myyotta_platform`) before publishing `WebsiteProvisioningRequested`. The orchestrator consumes that event and dispatches **Website Deployment**. The workflow installs the tenant chart with the requested domain, creating its host rule automatically; no DNS or Ingress edit is needed for each tenant while testing locally.
 
-Website App CI validates and publishes the website image. The request-triggered `website_app_cd.yml` workflow receives the tenant, domain, an optional `image_tag` and the correlation ID, then runs Helm on the self-hosted Mac runner. It uses the newest CI-published website image when no `image_tag` is supplied, and the website-orchestrator image that is currently running in the cluster unless `orchestrator_image_tag` is given. It adds the requested domain as an Ingress host without recreating the cluster.
+Website CI validates and publishes the website image. The request-triggered `website_cd.yml` workflow receives the tenant, domain, an optional `image_tag` and the correlation ID, then runs Helm on the self-hosted Mac runner. It uses the newest CI-published website image when no `image_tag` is supplied, and the website-orchestrator image that is currently running in the cluster unless `orchestrator_image_tag` is given. It adds the requested domain as an Ingress host without recreating the cluster.
 
 ## 4. Check the result
 
 ```sh
 kubectl logs -n platform deployment/website-orchestrator --tail=100
-kubectl logs -n platform deployment/website-provisioning --tail=100
+kubectl logs -n platform deployment/hosting-platform --tail=100
 kubectl get all,hpa,pdb,resourcequota,ingress -n user4
 curl -k https://user4.myyotta.com:8443/health/ready
 ```
@@ -68,7 +71,7 @@ Successful deployments publish `WebsiteCreated`. If Helm rollout, the HTTPS heal
 For direct deployment of the three sample tenants, use:
 
 ```sh
-IMAGE=ghcr.io/<owner>/website-app:<tag> \
+IMAGE=ghcr.io/<owner>/website:<tag> \
 ORCHESTRATOR_IMAGE=ghcr.io/<owner>/website-orchestrator:<tag> \
 PULL_IMAGE=true ./scripts/deploy-sample-tenants.sh
 ```
@@ -81,9 +84,9 @@ The service pipeline runs Python lint and unit tests, Bandit checks for risky co
 
 Each pushed image is tagged `MAJOR.MINOR.PATCH-YYYYMMDDHHMMSS` (UTC build time), for example `1.0.0-20261116010802`. The deployment workflows reject any other format before touching the registry or the cluster. The repository owner portion of the GHCR image name is normalized to lowercase. Update the repository's `VERSION` file to change the major, minor, or patch part.
 
-`platform_ci.yml` renders and schema-validates the pinned cluster add-on charts, platform chart, and Prometheus/Grafana chart; it scans project-managed resources and Fluentd's image, then publishes a versioned Fluentd image. After CI succeeds, run `platform_cd.yml` manually with that image tag to install cluster add-ons, the platform release, and monitoring through Helm on the Mac runner. Website App Deployment and Website Provisioning Deployment also target the self-hosted Mac runner and use Helm for Kubernetes changes. The monitoring chart's remaining inherited Trivy findings are listed with reasons in [helm/monitoring/.trivyignore](../helm/monitoring/.trivyignore). The CI workflows lint and render tenant and provisioning charts, validate their Kubernetes resources with Kubeconform, and scan rendered resources for high-risk security settings. Trivy's image scan reports a false positive for setuptools 70.3.0 from a replaced image layer; the final image contains fixed setuptools 80.10.2. That one advisory is documented in `.trivyignore`; other high and critical image findings still fail CI.
+`platform_ci.yml` renders and schema-validates the pinned cluster add-on charts, the kafka, logging, grafana-dashboards and cluster-issuer charts, and the Prometheus/Grafana chart; it scans project-managed resources and Fluentd's image, then publishes a versioned Fluentd image. After CI succeeds, run `platform_cd.yml` manually with that image tag to install cluster add-ons, the platform release, and monitoring through Helm on the Mac runner. Website Deployment and Hosting Platform Deployment also target the self-hosted Mac runner and use Helm for Kubernetes changes. The monitoring chart's remaining inherited Trivy findings are listed with reasons in [helm/monitoring/.trivyignore](../helm/monitoring/.trivyignore). The CI workflows lint and render tenant and provisioning charts, validate their Kubernetes resources with Kubeconform, and scan rendered resources for high-risk security settings. Trivy's image scan reports a false positive for setuptools 70.3.0 from a replaced image layer; the final image contains fixed setuptools 80.10.2. That one advisory is documented in `.trivyignore`; other high and critical image findings still fail CI.
 
-Before running **Platform Deployment** or **Website Orchestrator Deployment**, add the repository Actions secret `ORCHESTRATOR_GITHUB_TOKEN` (both store it in the cluster for the orchestrator, and both stop with an error if it is missing). Use a fine-grained token scoped to this repository with **Actions: Read and write** so the orchestrator can dispatch Website App Deployment. The workflow passes `github.repository` as `orchestrator.repository` and the secret as `orchestrator.githubToken` during the platform Helm upgrade.
+The website orchestrator has its own chart, `helm/website-orchestrator-helm` (chart and release `website-orchestrator`, namespace `platform`), deployed by **Website Orchestrator Deployment** after **Platform Deployment** has installed Kafka. Before running it, add the repository Actions secret `ORCHESTRATOR_GITHUB_TOKEN`: a fine-grained token scoped to this repository with **Actions: Read and write**, so the orchestrator can dispatch Website Deployment and Website Teardown. The workflow passes `github.repository` as `github.repository` and stores the token in the Secret `orchestrator-github-token` (never in Helm values).
 
 ### Manual approval
 
@@ -93,15 +96,15 @@ Every deployment pipeline waits for a person to approve it before it changes any
 |---|---|
 | Platform Deployment (`platform_cd.yml`) | `platform-deployment` |
 | Website Orchestrator Deployment (`website_orchestrator_cd.yml`) | `website-orchestrator-deployment` |
-| Website Provisioning Deployment (`website_provisioning_cd.yml`) | `website-provisioning-deployment` |
-| Website App Deployment (`website_app_cd.yml`, one run per tenant) | `website-app-deployment` |
+| Hosting Platform Deployment (`hosting_platform_cd.yml`) | `hosting-platform-deployment` |
+| Website Deployment (`website_cd.yml`, one run per tenant) | `website-deployment` |
 | AIOps Pod Doctor Deployment (`aiops_pod_doctor_cd.yml`) | `aiops-deployment` (also holds `GROK_API_KEY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `REPORT_EMAIL_TO`) |
 
 Set them up once with `scripts/setup-deployment-approvals.sh` (needs the GitHub CLI, logged in with admin rights). It creates the five environments, makes you the required reviewer, and only allows deployments from `master`, `feature` and `feature/*`, the same branches the CD jobs accept. To add more reviewers: `scripts/setup-deployment-approvals.sh alice bob`.
 
 When a deployment starts, the run shows **Review deployments**: open it, tick the environment and choose **Approve and deploy** (or **Reject**). Nothing runs on the Mac until then.
 
-Website App Deployment is started automatically by the orchestrator when a website is requested, so every new tenant website also waits for approval. Without required reviewers on an environment, its job runs without stopping, so the setup script is what makes the gate real.
+Website Deployment is started automatically by the orchestrator when a website is requested, so every new tenant website also waits for approval. Without required reviewers on an environment, its job runs without stopping, so the setup script is what makes the gate real.
 
 ## Scaling demo
 
@@ -114,7 +117,7 @@ python3 scripts/load-test.py --tenant user1 --seconds 180 --workers 40
 
 Each tenant has CPU and memory requests/limits, CPU and memory HPA targets (60 % / 75 %, 2–8 replicas), a ResourceQuota, a LimitRange, and a PDB. Prometheus scrapes the website metrics and Grafana provides the dashboard. Fluentd forwards pod logs to Loki.
 
-To demonstrate a rollback, run Website App Deployment with `simulate_failure=true`; see [rollback.md](rollback.md).
+To demonstrate a rollback, run Website Deployment with `simulate_failure=true`; see [rollback.md](rollback.md).
 
 ## Local development
 

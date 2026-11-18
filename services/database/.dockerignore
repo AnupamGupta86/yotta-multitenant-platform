@@ -1,0 +1,4 @@
+# Only init/ goes into the image
+*
+!init/
+!init/*.sql

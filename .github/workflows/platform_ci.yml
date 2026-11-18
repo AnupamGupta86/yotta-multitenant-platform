@@ -4,9 +4,9 @@ on:
   push:
     branches: [master, feature, 'feature/**']
     paths:
-      - 'helm/platform/**'
+      - 'helm/kafka-helm/**'
+      - 'helm/logging-helm/**'
       - 'helm/monitoring/**'
-      - 'images/fluentd-loki/**'
       - 'helm/cluster-addons/**'
       - 'kind/**'
       - 'scripts/setup-kind.sh'
@@ -22,9 +22,9 @@ on:
   pull_request:
     branches: [master, feature, 'feature/**']
     paths:
-      - 'helm/platform/**'
+      - 'helm/kafka-helm/**'
+      - 'helm/logging-helm/**'
       - 'helm/monitoring/**'
-      - 'images/fluentd-loki/**'
       - 'helm/cluster-addons/**'
       - 'kind/**'
       - 'scripts/setup-kind.sh'
@@ -66,15 +66,24 @@ jobs:
           helm repo update
       - name: Lint and render the project Helm charts
         run: |
-          helm lint helm/platform
           mkdir -p /tmp/rendered-platform /tmp/rendered-monitoring
-          helm template "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" > /tmp/rendered-platform/platform.yaml
+          # Shared platform charts: kafka, logging (Loki + Fluentd), Grafana dashboards, ClusterIssuer
+          helm lint helm/kafka-helm
+          helm lint helm/logging-helm
+          helm lint helm/monitoring/grafana-dashboards
+          helm lint helm/cluster-addons/cluster-issuer
+          helm template "$KAFKA_RELEASE_NAME" helm/kafka-helm --namespace "$PLATFORM_NAMESPACE" > /tmp/rendered-platform/kafka.yaml
+          helm template "$LOGGING_RELEASE_NAME" helm/logging-helm --namespace "$OBSERVABILITY_NAMESPACE" > /tmp/rendered-platform/logging.yaml
+          helm template "$GRAFANA_DASHBOARDS_RELEASE_NAME" helm/monitoring/grafana-dashboards \
+            --namespace "$OBSERVABILITY_NAMESPACE" > /tmp/rendered-platform/grafana-dashboards.yaml
+          helm template cluster-issuer helm/cluster-addons/cluster-issuer --namespace cert-manager \
+            > /tmp/rendered-platform/cluster-issuer.yaml
           awk '
             /^  fluent.conf: \|$/ { in_config = 1; found = 1; next }
             in_config && /^    / { sub(/^    /, ""); print; next }
             in_config { exit }
             END { if (!found) exit 1 }
-          ' /tmp/rendered-platform/platform.yaml > /tmp/fluent.conf
+          ' /tmp/rendered-platform/logging.yaml > /tmp/fluent.conf
           test -s /tmp/fluent.conf
           chart_version="$(tr -d '[:space:]' < helm/monitoring/chart-version.txt)"
           mkdir -p /tmp/monitoring-chart
@@ -97,7 +106,7 @@ jobs:
             --set 'installation.calicoNetwork.ipPools[0].cidr=192.168.0.0/16' \
             > /tmp/rendered-addons/calico.yaml
           helm template ingress-nginx ingress-nginx/ingress-nginx \
-            --version "$INGRESS_NGINX_VERSION" --namespace ingress-nginx \
+            --version "$INGRESS_NGINX_VERSION" --namespace infrastructure \
             --set controller.kind=DaemonSet \
             --set controller.hostPort.enabled=true \
             --set-string controller.nodeSelector.ingress-ready=true \
@@ -139,12 +148,12 @@ jobs:
       - name: Lint Fluentd Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: images/fluentd-loki/Dockerfile
+          dockerfile: helm/logging-helm/image/Dockerfile
       - uses: docker/setup-buildx-action@v4
       - name: Build Fluentd image for validation
         uses: docker/build-push-action@v7
         with:
-          context: images/fluentd-loki
+          context: helm/logging-helm/image
           load: true
           tags: local/yotta/${{ steps.pipeline.outputs.fluentd_image_name }}:${{ github.sha }}
       - name: Validate Fluentd image and mounted configuration
@@ -197,7 +206,7 @@ jobs:
       - name: Publish Fluentd image
         uses: docker/build-push-action@v7
         with:
-          context: images/fluentd-loki
+          context: helm/logging-helm/image
           platforms: ${{ steps.pipeline.outputs.image_build_platforms }}
           push: true
           tags: |

@@ -1,0 +1,55 @@
+# Kafka for the website-events topic. Release: kafka, namespace: platform (next to its producers and consumers).
+# Deployed by Platform Deployment (platform_cd.yml). Data stays on the StatefulSet PVC data-kafka-0.
+images:
+  kafka: apache/kafka:4.4.0
+  kafkaExporter: danielqsj/kafka-exporter:v1.9.0
+kafka:
+  name: kafka
+  headlessServiceName: kafka-headless
+  replicas: 1
+  ports:
+    controller: 9093
+    internal: 19092
+    external: 9092
+  listeners:
+    controller: CONTROLLER
+    internal: INTERNAL
+    external: EXTERNAL
+    securityProtocol: PLAINTEXT
+    externalAdvertisedHost: localhost
+    externalAdvertisedPort: 19092
+  nodeId: 1
+  processRoles: broker,controller
+  offsetsReplicationFactor: 1
+  transactionReplicationFactor: 1
+  transactionMinIsr: 1
+  groupInitialRebalanceDelayMs: 0
+  numPartitions: 1
+  # The image defaults to a 1 GiB Java heap; 256 MiB is plenty for one broker with a few topics.
+  # Limit = heap + ~250 MiB for metaspace, threads and network buffers.
+  heapOpts: -Xms256m -Xmx256m
+  resources:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {cpu: "1", memory: 768Mi}
+  readinessProbe:
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  storage:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
+    volumeName: data
+    mountPath: /var/lib/kafka/data
+kafkaExporter:
+  enabled: true
+  name: kafka-exporter
+  port: 9308
+  # Protocol version the exporter speaks; Kafka 4.x no longer accepts the exporter's 2.0 default
+  kafkaProtocolVersion: "3.6.0"
+  serviceMonitorRelease: prometheus
+  scrapeInterval: 30s
+  resources:
+    requests: {cpu: 10m, memory: 24Mi}
+    limits: {cpu: 100m, memory: 64Mi}

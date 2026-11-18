@@ -1,0 +1,6 @@
+apiVersion: v2
+name: logging
+description: Log pipeline - Fluentd DaemonSet ships every pod's logs to Loki (Grafana reads them)
+type: application
+version: 0.1.0
+appVersion: "3.2.1"

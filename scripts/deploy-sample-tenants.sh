@@ -2,7 +2,7 @@
 # Deploy the website chart for each configured sample tenant; run with ./scripts/deploy-sample-tenants.sh after building or publishing the images.
 set -euo pipefail
 
-DEFAULT_WEBSITE_IMAGE=ghcr.io/owner/website-app:latest
+DEFAULT_WEBSITE_IMAGE=ghcr.io/owner/website:latest
 # Default: the image the running website-orchestrator uses (setup tags local images per run)
 DEFAULT_ORCHESTRATOR_IMAGE="$(kubectl get deployment website-orchestrator --namespace platform \
   -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"

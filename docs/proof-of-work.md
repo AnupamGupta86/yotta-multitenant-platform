@@ -32,19 +32,19 @@ All screenshots live in [`docs/proof/screenshots/`](proof/screenshots/). ✅ = c
 | 07 | `07-actions-all-workflows.png` | 3 CI/CD | all CI/CD workflows, recent runs green | Actions tab | ✅ |
 | 08 | `08-ci-orchestrator-run.png` | 3 CI/CD | orchestrator CI: validate → publish, no leaks | a green CI run | ✅ |
 | 09 | `09-ci-provisioning-pipeline.png` | 3 CI/CD | chart-validation → validate → publish | a green CI run | ✅ |
-| 10 | `10-ci-website-app-pipeline.png` | 3 CI/CD | chart-validation → validate → publish | a green CI run | ✅ |
+| 10 | `10-ci-website-pipeline.png` | 3 CI/CD | chart-validation → validate → publish | a green CI run | ✅ |
 | 11 | `11-ci-tag-orchestrator.png` | 3 CI/CD | deployable image tag in the run summary | CI run summary | ✅ |
 | 12 | `12-ci-tag-provisioning.png` | 3 CI/CD | deployable image tag in the run summary | CI run summary | ✅ |
-| 13 | `13-ci-tag-website-app.png` | 3 CI/CD | deployable image tag in the run summary | CI run summary | ✅ |
-| 14 | `14-cd-provisioning-runs.png` | 3 CI/CD | provisioning CD history | Actions → Website Provisioning Deployment | ✅ |
+| 13 | `13-ci-tag-website.png` | 3 CI/CD | deployable image tag in the run summary | CI run summary | ✅ |
+| 14 | `14-cd-provisioning-runs.png` | 3 CI/CD | provisioning CD history | Actions → Hosting Platform Deployment | ✅ |
 | 15 | `15-cd-orchestrator-runs.png` | 3 CI/CD | orchestrator CD history | Actions → Website Orchestrator Deployment | ✅ |
-| 16 | `16-cd-website-app-runs.png` | 3 CI/CD | tenant website CD history | Actions → Website App Deployment | ✅ |
+| 16 | `16-cd-website-runs.png` | 3 CI/CD | tenant website CD history | Actions → Website Deployment | ✅ |
 | 25 | `25-cd-approval.png` | 3 CI/CD | the **Review deployments** approval dialog | start any CD run, before approving | ⏳ |
-| 26 | `26-rollback-run.png` | 3 CI/CD | red run: Helm deploy failed, "Publish deployment failure event" green | `website_app_cd.yml` with `simulate_failure=true` | ⏳ |
+| 26 | `26-rollback-run.png` | 3 CI/CD | red run: Helm deploy failed, "Publish deployment failure event" green | `website_cd.yml` with `simulate_failure=true` | ⏳ |
 | 27 | `27-helm-history-rollback.png` | 3 CI/CD | failed revision followed by "Rollback to N"; user1 still ready | `helm history user1 -n user1` + `curl …/health/ready` | ⏳ |
 | 20 | `20-kafka-request-202.png` | 4 Kafka | provisioning request accepted (202 + event ID) | `curl -k -i -X POST …/api/v1/websites` (user5) | ⏳ |
 | 21 | `21-kafka-orchestrator-log.png` | 4 Kafka | orchestrator consumed the event and dispatched the deployment | `kubectl logs -n platform deploy/website-orchestrator -f` | ⏳ |
-| 22 | `22-kafka-triggered-cd-run.png` | 4 Kafka | the Website App Deployment run started by the event | Actions tab | ⏳ |
+| 22 | `22-kafka-triggered-cd-run.png` | 4 Kafka | the Website Deployment run started by the event | Actions tab | ⏳ |
 | 23 | `23-user5-live.png` | 4 Kafka | the new tenant's pods and HTTPS answer | `kubectl get pods -n user5`; `curl -k https://user5.myyotta.com:8443/api/v1` | ⏳ |
 | 24 | `24-kafka-events-and-lag.png` | 4 Kafka | requested / created / failed events and consumer lag 0 | `kafka-console-consumer.sh`, `kafka-consumer-groups.sh` | ⏳ |
 | 17 | `17-grafana-load-cycle.png` | 5 Observability | whole load test on the platform dashboard | Grafana dashboard | ✅ |
@@ -59,7 +59,7 @@ Before you start, deploy the platform and the three tenants (`./scripts/setup-lo
 and add the hosts line to `/etc/hosts`:
 
 ```text
-127.0.0.1 provisioning.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com
+127.0.0.1 api.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com
 ```
 
 ---
@@ -72,20 +72,23 @@ certificate, HPA, PDB, quota and network policy, and one tenant cannot reach ano
 ```sh
 helm list -A
 kubectl get deploy,statefulset,ingress,hpa,pdb,resourcequota,networkpolicy -n user1
-curl -k https://user1.myyotta.com:8443/api/v1         # {"service":"website-app","version":"v1"}
+curl -k https://user1.myyotta.com:8443/api/v1         # {"service":"website","version":"v1"}
 curl -k https://user2.myyotta.com:8443/health/ready   # {"status":"ready"}  (checked its own DB)
 ```
 
-**Expect:** releases `user1`, `user2`, `user3` (plus `platform`, `website-provisioning`, `prometheus`),
+**Expect:** releases `user1`, `user2`, `user3` (plus `kafka`, `logging`, `prometheus`, `grafana-dashboards`, `cluster-issuer`, `website-orchestrator`, `hosting-platform`, `myyotta-postgresql`),
 every tenant `Ready`, certificates `READY=True`, and the isolation check in `1-multi-tenant.txt`
 ending with `BLOCKED as expected`.
 
 **New tenant without touching the cluster** (the live part of the demo):
 
 ```sh
-curl -k -X POST https://provisioning.myyotta.com:8443/api/v1/websites \
-  -H 'Content-Type: application/json' -d '{"tenant":"user4","domain":"user4.myyotta.com"}'
-# 202 Accepted -> Kafka -> orchestrator -> "Website App Deployment" run (approve it) -> user4 namespace
+curl -k -X POST https://api.myyotta.com:8443/api/v1/users/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alice","email":"alice@example.com","password":"correct-horse-1"}'   # once: the owner
+curl -k -X POST https://api.myyotta.com:8443/api/v1/websites \
+  -H 'Content-Type: application/json' -d '{"tenant":"user4","domain":"user4.myyotta.com","email":"alice@example.com"}'
+# 202 Accepted -> Kafka -> orchestrator -> "Website Deployment" run (approve it) -> user4 namespace
 ```
 
 **Screenshots**
@@ -143,12 +146,12 @@ Still to add: the panels "Website replicas: current vs desired (HPA)" and "CPU u
 **Show:** CI validates and publishes a versioned image, CD waits for approval and deploys with Helm,
 a failed deploy rolls back automatically and sends a `WebsiteDeploymentFailed` event.
 
-1. **CI:** any push → Actions shows Website App CI green; its summary shows the image tag
+1. **CI:** any push → Actions shows Website CI green; its summary shows the image tag
    (`1.0.0-YYYYMMDDHHMMSS`).
-2. **CD with approval:** run *Website App Deployment* (`tenant=user1`, `domain=user1.myyotta.com`) → **Review deployments** → approve.
+2. **CD with approval:** run *Website Deployment* (`tenant=user1`, `domain=user1.myyotta.com`) → **Review deployments** → approve.
 3. **Rollback:** run it again with **simulate_failure = true**:
    ```sh
-   gh workflow run website_app_cd.yml --ref master -f tenant=user1 -f domain=user1.myyotta.com -f simulate_failure=true
+   gh workflow run website_cd.yml --ref master -f tenant=user1 -f domain=user1.myyotta.com -f simulate_failure=true
    ```
    The release is deployed with a readiness probe that can never pass. After 2 minutes Helm rolls back,
    the job publishes `WebsiteDeploymentFailed` and fails (red, as it should). user1 keeps serving throughout.
@@ -178,21 +181,21 @@ Bandit, pip-audit, Gitleaks "No leaks detected", hadolint, image build, Trivy, c
 
 ![Orchestrator CI](proof/screenshots/08-ci-orchestrator-run.png)
 ![Provisioning CI](proof/screenshots/09-ci-provisioning-pipeline.png)
-![Website App CI](proof/screenshots/10-ci-website-app-pipeline.png)
+![Website CI](proof/screenshots/10-ci-website-pipeline.png)
 
 *Versioned images*: every publish writes the deployable tag `1.0.0-YYYYMMDDHHMMSS` and the full GHCR image to the
 run summary; that tag is the CD input.
 
 ![Orchestrator image tag](proof/screenshots/11-ci-tag-orchestrator.png)
 ![Provisioning image tag](proof/screenshots/12-ci-tag-provisioning.png)
-![Website app image tag](proof/screenshots/13-ci-tag-website-app.png)
+![Website app image tag](proof/screenshots/13-ci-tag-website.png)
 
 *CD history*: manual deployments of the provisioning API, the orchestrator and tenant websites. The early red runs
 are from setting up the self-hosted runner (wrong tag, missing secret, runner Python); every later run is green.
 
 ![Provisioning CD runs](proof/screenshots/14-cd-provisioning-runs.png)
 ![Orchestrator CD runs](proof/screenshots/15-cd-orchestrator-runs.png)
-![Website App CD runs](proof/screenshots/16-cd-website-app-runs.png)
+![Website CD runs](proof/screenshots/16-cd-website-runs.png)
 
 Still to add: the **Review deployments** approval dialog, the red `simulate_failure=true` run (with the
 "Publish deployment failure event" step), and `helm history user1 -n user1` showing the rollback.

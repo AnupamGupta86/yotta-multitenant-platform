@@ -43,6 +43,18 @@ jobs:
       - name: Dependency vulnerability audit
         working-directory: services/website-orchestrator
         run: pip-audit -r requirements.txt --strict
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ steps.pipeline.outputs.helm_version }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Lint, render and validate the website-orchestrator chart
+        run: |
+          bash .github/scripts/validate-chart.sh website-orchestrator helm/website-orchestrator-helm \
+            --namespace platform --set-string github.repository="$GITHUB_REPOSITORY"
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v3
         env:

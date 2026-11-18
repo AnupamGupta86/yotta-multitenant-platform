@@ -1,0 +1,20 @@
+{{- if and .Values.serviceMonitor.enabled .Values.metrics.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    release: {{ .Values.serviceMonitor.release }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: website
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: {{ .Values.service.targetPortName }}
+      path: {{ .Values.serviceMonitor.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+      # Keep the app's own labels (endpoint, service, tenant): without this Prometheus overwrites
+      # `endpoint` with the port name ("http") and the per-endpoint dashboard panel shows one line
+      honorLabels: true
+{{- end }}
