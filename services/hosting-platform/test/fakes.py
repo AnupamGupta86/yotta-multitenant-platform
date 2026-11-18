@@ -25,6 +25,14 @@ class FakeStore:
         self.users[user["user_id"]] = user
         return user
 
+    def list_users(self):
+        return [
+            {"userId": u["user_id"], "username": u["username"], "email": u["email"], "status": u["status"],
+             "createdAt": u["created_at"].isoformat(),
+             "websites": sum(1 for w in self.websites.values() if w["user_id"] == u["user_id"])}
+            for u in sorted(self.users.values(), key=lambda u: u["created_at"])
+        ]
+
     def find_user(self, email):
         return next(({"user_id": u["user_id"], "status": u["status"]} for u in self.users.values() if u["email"] == email), None)
 

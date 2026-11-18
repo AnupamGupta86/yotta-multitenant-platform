@@ -118,6 +118,7 @@ curl -k -X POST https://api.myyotta.com:8443/api/v1/users/register \
 curl -k -i -X POST https://api.myyotta.com:8443/api/v1/websites \
   -H 'Content-Type: application/json' \
   -d '{"tenant":"user4","domain":"user4.myyotta.com","email":"alice@example.com"}'
+curl -k https://api.myyotta.com:8443/api/v1/users                          # all registered users
 curl -k https://api.myyotta.com:8443/api/v1/websites                       # all websites and their status
 curl -k -i -X DELETE 'https://api.myyotta.com:8443/api/v1/websites?tenant=user4'   # teardown (approve it)
 ```
@@ -125,6 +126,7 @@ curl -k -i -X DELETE 'https://api.myyotta.com:8443/api/v1/websites?tenant=user4'
 | Endpoint | Does |
 |---|---|
 | `POST /api/v1/users/register` | creates a user (`username`, `email`, `password`; stored as a salted scrypt hash) |
+| `GET /api/v1/users` | all registered users (id, username, email, status, created, number of websites; never the password hash) |
 | `POST /api/v1/websites` | `tenant`, `domain`, owner `email` → website, domain, config and request event in `myyotta_platform`, then `WebsiteProvisioningRequested` on Kafka; repeating it is safe |
 | `GET /api/v1/websites` | all websites (or `?email=` one user's) with status and last deployment |
 | `DELETE /api/v1/websites?tenant=` | marks it `DELETING`, publishes `WebsiteDeletionRequested` → *Website Teardown* (approval) → `WebsiteDeleted` → record removed |

@@ -3,10 +3,11 @@
 # required reviewer. Every CD job then pauses before its first step until a reviewer approves.
 #
 #   environment                       used by
-#   platform-deployment               platform_cd.yml               (add-ons, platform chart, monitoring)
+#   platform-deployment               platform_cd.yml               (add-ons, kafka, logging, monitoring)
 #   website-orchestrator-deployment   website_orchestrator_cd.yml
-#   hosting-platform-deployment   hosting_platform_cd.yml
-#   website-deployment            website_cd.yml            (one run per tenant website)
+#   hosting-platform-deployment       hosting_platform_cd.yml
+#   website-deployment                website_cd.yml                (one run per tenant website)
+#                                     website_teardown.yml          (deletes a tenant website)
 #   aiops-deployment                  aiops_pod_doctor_cd.yml       (also holds GROK_API_KEY and the SMTP_* / REPORT_EMAIL_TO secrets)
 #   database-deployment               database_cd.yml               (platform database myyotta-postgresql)
 #

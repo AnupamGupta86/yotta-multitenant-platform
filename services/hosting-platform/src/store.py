@@ -77,6 +77,28 @@ class PlatformStore:
             raise
         return {"user_id": str(row[0]), "username": row[1], "email": row[2], "status": row[3], "created_at": row[4]}
 
+    def list_users(self):
+        """Every registered user with the number of websites they own. Never returns the password hash."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT u.user_id, u.username, u.email, u.status, u.created_at, count(w.website_id)
+                   FROM users u
+                   LEFT JOIN websites w ON w.user_id = u.user_id
+                   GROUP BY u.user_id
+                   ORDER BY u.created_at, u.username"""
+            ).fetchall()
+        return [
+            {
+                "userId": str(row[0]),
+                "username": row[1],
+                "email": row[2],
+                "status": row[3],
+                "createdAt": _iso(row[4]),
+                "websites": row[5],
+            }
+            for row in rows
+        ]
+
     def find_user(self, email):
         """The registered user with this e-mail, or None."""
         with self._connect() as connection:

@@ -79,6 +79,9 @@ expect "POST /api/v1/websites (unregistered owner)"          404 -X POST "${json
 expect "POST /api/v1/websites"                               202 -X POST "${json[@]}" "$api/api/v1/websites" -d '{"tenant":"user7","domain":"user7.myyotta.com","email":"alice@example.com"}'
 expect "POST /api/v1/websites again (idempotent)"            202 -X POST "${json[@]}" "$api/api/v1/websites" -d '{"tenant":"user7","domain":"user7.myyotta.com","email":"alice@example.com"}'
 expect "POST /api/v1/websites (domain already used)"         409 -X POST "${json[@]}" "$api/api/v1/websites" -d '{"tenant":"user8","domain":"user7.myyotta.com","email":"alice@example.com"}'
+expect "GET /api/v1/users"                                   200 "$api/api/v1/users"
+grep -q '"email":"alice@example.com"' /tmp/e2e-body || { echo "FAIL GET /api/v1/users does not list alice"; failures=$((failures + 1)); }
+if grep -qi 'password\|scrypt' /tmp/e2e-body; then echo "FAIL GET /api/v1/users exposes password data"; failures=$((failures + 1)); fi
 expect "GET /api/v1/websites"                                200 "$api/api/v1/websites"
 grep -q '"tenant":"user7"' /tmp/e2e-body || { echo "FAIL GET /api/v1/websites does not list user7"; failures=$((failures + 1)); }
 expect "GET /api/v1/websites?email=alice@example.com"        200 "$api/api/v1/websites?email=alice@example.com"

@@ -56,6 +56,19 @@ class ProvisioningApiTests(unittest.TestCase):
         self.assertTrue(stored.startswith("scrypt$"))
         self.assertNotIn("correct-horse-1", stored)
 
+    def test_list_users_shows_every_registered_user_without_passwords(self):
+        self.assertEqual(self.client.get("/api/v1/users").json(), {"users": []})
+        self.register()
+        self.register(username="bob", email="bob@example.com")
+        self.request()
+        response = self.client.get("/api/v1/users")
+        self.assertEqual(response.status_code, 200)
+        users = response.json()["users"]
+        self.assertEqual([(u["username"], u["email"], u["websites"]) for u in users],
+                         [("alice", "alice@example.com", 1), ("bob", "bob@example.com", 0)])
+        self.assertNotIn("password", str(users).lower())
+        self.assertNotIn("scrypt", str(users))
+
     def test_register_rejects_duplicates_and_weak_input(self):
         self.register()
         self.assertEqual(self.register(username="alice2").status_code, 409)          # same e-mail

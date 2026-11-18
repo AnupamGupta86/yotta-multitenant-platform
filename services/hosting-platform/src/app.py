@@ -161,6 +161,11 @@ def create_app(store=None, publish=None, kafka_ready=None, lifespan=None):
             "createdAt": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
         }
 
+    @app.get("/api/v1/users")
+    def list_users(store: Store):
+        """All registered users (no password hashes) with the number of websites each one owns."""
+        return {"users": store.list_users()}
+
     # ---- websites
     @app.post("/api/v1/websites", status_code=202)
     def request_website(payload: WebsiteRequest, request: Request, store: Store):
