@@ -3,7 +3,9 @@
 set -euo pipefail
 
 DEFAULT_WEBSITE_IMAGE=ghcr.io/owner/website-app:latest
-DEFAULT_ORCHESTRATOR_IMAGE=yotta/website-orchestrator:local
+# Default: the image the running website-orchestrator uses (setup tags local images per run)
+DEFAULT_ORCHESTRATOR_IMAGE="$(kubectl get deployment website-orchestrator --namespace platform \
+  -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 DEFAULT_TENANTS='user1 user2 user3'
 LOCAL_DOMAIN_SUFFIX=myyotta.com
 DEPLOY_TENANT_SCRIPT=./scripts/deploy-tenant.sh

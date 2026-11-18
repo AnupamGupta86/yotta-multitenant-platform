@@ -1,4 +1,7 @@
 FROM python:3.12-slim-trixie
+# Build-time only (not set in the running container): apt must not prompt, and installing
+# packages as root during the build is intended (the app itself runs as uid 10001)
+ARG DEBIAN_FRONTEND=noninteractive PIP_ROOT_USER_ACTION=ignore PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

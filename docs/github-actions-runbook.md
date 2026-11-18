@@ -86,6 +86,8 @@ yotta-multitenant-platform/
 │   ├── load-image-into-kind.sh   Load only the node's platform of a multi-platform image into Kind
 │   ├── build-version.sh          Image tag 1.0.0-YYYYMMDDHHMMSS
 │   ├── helm-retry.sh             Retry wrapper for transient Helm/network errors
+│   ├── check-docker.sh           Setup: Docker engine reachable (starts Colima, sizes it, fixes context, inotify)
+│   ├── check-routes.sh           Every Ingress host answers 200, no duplicate hosts, no pod on an old image
 │   ├── helm-release.sh           HELM_MODE=apply: helm upgrade --install; HELM_MODE=diff: coloured diff for review
 │   ├── load-test.py              CPU load generator for the HPA demo
 │   ├── collect-proof.sh          Proof-of-work evidence for all five assignment items
@@ -154,7 +156,7 @@ flowchart LR
 
 | # | What | How |
 |---|---|---|
-| 1 | Tools on the Mac | Docker Desktop, Kind, kubectl, Helm 4.x, Python 3.9+ (`python3`), GitHub CLI `gh` |
+| 1 | Tools on the Mac | Docker engine (Colima: `brew install colima docker`, or Docker Desktop), Kind, kubectl, Helm 4.x, Python 3.9+ (`python3`), GitHub CLI `gh` |
 | 2 | Kind cluster | `./scripts/setup-kind.sh` (or `./scripts/setup-local-e2e.sh` for everything) |
 | 3 | Self-hosted runner | Settings → Actions → Runners → *New self-hosted runner* (macOS), label **`yotta-local-k8s`**; keep `./run.sh` running. Details: [local-runner.md](local-runner.md) |
 | 4 | Repository secret `ORCHESTRATOR_GITHUB_TOKEN` | Fine-grained PAT for this repo with **Actions: Read and write**: `gh secret set ORCHESTRATOR_GITHUB_TOKEN` |
@@ -401,6 +403,7 @@ gh run list --workflow website_app_cd.yml --limit 3
 | Change the e-mail login or recipients | `gh secret set SMTP_USERNAME` / `SMTP_PASSWORD` / `REPORT_EMAIL_TO --env aiops-deployment`, then re-run `aiops_pod_doctor_cd.yml` |
 | Add a reviewer | `./scripts/setup-deployment-approvals.sh <login> [<login>...]` |
 | See what is deployed | `helm list -A`; `kubectl get deploy -A -o wide` |
+| Check every route and find stale pods | `./scripts/check-routes.sh` (also runs at the end of `setup-local-e2e.sh`) |
 | Collect proof of work | `./scripts/collect-proof.sh` ([proof-of-work.md](proof-of-work.md)) |
 
 ---
@@ -428,3 +431,7 @@ gh run list --workflow website_app_cd.yml --limit 3
 | ShellCheck / ruff / hadolint failure in CI | lint finding | fix the reported line; CI fails on info-level findings too |
 | `another operation (install/upgrade/rollback) is in progress` | an earlier run was cancelled mid-upgrade | re-run the CD: it rolls the release back (or removes a never-deployed one) before upgrading |
 | `The platform release is not installed yet` | fresh cluster | run Platform Deployment first (needs a published orchestrator image) |
+| `Docker is not reachable` from the setup scripts | Colima stopped, or the docker CLI still uses Docker Desktop's context | `colima start --cpu 4 --memory 8`, then `docker context use colima` (the scripts do both when Colima is installed) |
+| `docker-credential-desktop: executable file not found` | Docker Desktop's credential helper left in `~/.docker/config.json` | remove the `"credsStore": "desktop"` line |
+| Same URL alternates between 404 and 200 | an older pod is still serving (old image or old ReplicaSet), or two Ingresses claim the host | `./scripts/check-routes.sh` names the pod or Ingress; `kubectl rollout restart deployment/<name> -n <ns>` |
+| Deploy step fails with `exit code 125` in under a second | a Kind node container is stopped (Colima/Docker was restarted) | `docker start yotta-platform-worker` (or run `./scripts/setup-kind.sh`, which starts stopped nodes); CD now names the stopped node |

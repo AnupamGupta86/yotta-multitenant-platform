@@ -14,7 +14,7 @@ The utility does not edit `/etc/hosts`; add the line it prints after setup if th
 
 ## 1. Prepare the Mac runner and cluster
 
-Install Docker Desktop, Kind, kubectl, Helm 4.x, Python 3.12+, and a self-hosted GitHub Actions runner. Add the runner label `yotta-local-k8s`.
+Install a Docker engine (Colima or Docker Desktop), Kind, kubectl, Helm 4.x, Python 3.12+, and a self-hosted GitHub Actions runner. Add the runner label `yotta-local-k8s`.
 
 Create a fine-grained token for this repository with **Actions: Read and write**. That permission allows the in-cluster orchestrator to call GitHub's workflow-dispatch endpoint. Keep the token in your shell environment and do not commit it:
 

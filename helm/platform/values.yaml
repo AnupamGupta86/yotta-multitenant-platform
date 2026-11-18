@@ -32,9 +32,12 @@ kafka:
   transactionMinIsr: 1
   groupInitialRebalanceDelayMs: 0
   numPartitions: 1
+  # The image defaults to a 1 GiB Java heap; 256 MiB is plenty for one broker with a few topics.
+  # Limit = heap + ~250 MiB for metaspace, threads and network buffers.
+  heapOpts: -Xms256m -Xmx256m
   resources:
-    requests: {cpu: 250m, memory: 512Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {cpu: "1", memory: 768Mi}
   readinessProbe:
     initialDelaySeconds: 20
     periodSeconds: 10
@@ -55,8 +58,8 @@ orchestrator:
   kafkaGroupId: deployment-orchestrator
   imagePullPolicy: IfNotPresent
   resources:
-    requests: {cpu: 50m, memory: 64Mi}
-    limits: {cpu: 250m, memory: 256Mi}
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 192Mi}
 notification:
   secretName: notification-webhook
   webhookUrl: ""
@@ -116,7 +119,7 @@ observability:
       periodSeconds: 10
       timeoutSeconds: 5
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
+      requests: {cpu: 50m, memory: 128Mi}
       limits: {cpu: 500m, memory: 512Mi}
   fluentd:
     serviceAccountName: fluentd
@@ -140,5 +143,5 @@ observability:
       containers: /var/log/containers
       pods: /var/log/pods
     resources:
-      requests: {cpu: 100m, memory: 128Mi}
-      limits: {cpu: 500m, memory: 512Mi}
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 384Mi}

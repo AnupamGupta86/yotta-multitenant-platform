@@ -5,15 +5,19 @@ set -euo pipefail
 # Configuration defaults. Override image/host defaults with environment variables,
 # or pass a tenant and optional domain to install one tenant instead of the samples.
 DEFAULT_TENANT="${DEFAULT_TENANT:-}"
-DEFAULT_TENANTS=(user1 user2 user3)
+DEFAULT_TENANTS=(user1)
 DEFAULT_DOMAIN_SUFFIX="${DEFAULT_DOMAIN_SUFFIX:-myyotta.com}"
 CLUSTER_NAME="${CLUSTER_NAME:-yotta-platform}"
 CLUSTER_DELETE_CONFIRMATION="delete ${CLUSTER_NAME}"
 PROVISIONING_HOST="${PROVISIONING_HOST:-provisioning.myyotta.com}"
 OBSERVABILITY_HOSTS=(grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com)
-PROVISIONING_IMAGE="${PROVISIONING_IMAGE:-yotta/website-provisioning:local}"
-WEBSITE_IMAGE="${WEBSITE_IMAGE:-yotta/website-app:local}"
-WEBSITE_ORCHESTRATOR_IMAGE="${WEBSITE_ORCHESTRATOR_IMAGE:-yotta/website-orchestrator:local}"
+# One new tag for every image of this run (see setup-kind.sh): a changed tag always rolls the pods,
+# so no pod keeps serving an image from an earlier run.
+LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-local-$(date -u +%Y%m%d%H%M%S)}"
+export LOCAL_IMAGE_TAG
+PROVISIONING_IMAGE="${PROVISIONING_IMAGE:-yotta/website-provisioning:$LOCAL_IMAGE_TAG}"
+WEBSITE_IMAGE="${WEBSITE_IMAGE:-yotta/website-app:$LOCAL_IMAGE_TAG}"
+WEBSITE_ORCHESTRATOR_IMAGE="${WEBSITE_ORCHESTRATOR_IMAGE:-yotta/website-orchestrator:$LOCAL_IMAGE_TAG}"
 PROVISIONING_CHART="${PROVISIONING_CHART:-helm/website-provisioning}"
 WEBSITE_CHART="${WEBSITE_CHART:-helm/website-app}"
 PROVISIONING_BUILD_CONTEXT="${PROVISIONING_BUILD_CONTEXT:-services/website-provisioning}"
@@ -71,7 +75,8 @@ fi
 for tool in "${REQUIRED_TOOLS[@]}"; do
   command -v "$tool" >/dev/null || { echo "Install $tool and retry" >&2; exit 1; }
 done
-docker info >/dev/null 2>&1 || { echo "Start Docker Desktop before setup" >&2; exit 1; }
+# shellcheck source=scripts/check-docker.sh
+source "$script_dir/check-docker.sh"   # Colima or Docker Desktop: reachable, started, sized
 
 if [[ -z "${ORCHESTRATOR_REPOSITORY:-}" ]]; then
   remote="$(git remote get-url origin 2>/dev/null || true)"
@@ -170,6 +175,9 @@ echo "Observability (Grafana user admin):"
 for host in "${OBSERVABILITY_HOSTS[@]}"; do
   echo "  https://${host}:${LOCAL_HTTPS_PORT}"
 done
+
+echo
+"$script_dir/check-routes.sh" || echo "Warning: some routes are not healthy yet; see above (re-run ./scripts/check-routes.sh)." >&2
 
 HOSTS_TO_RESOLVE=("$PROVISIONING_HOST" "${DOMAINS_TO_DEPLOY[@]}" "${OBSERVABILITY_HOSTS[@]}")
 echo

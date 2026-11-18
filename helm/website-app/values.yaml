@@ -4,7 +4,7 @@ image:
   repository: ghcr.io/owner/website-app
   tag: latest
   pullPolicy: IfNotPresent
-replicaCount: 2
+replicaCount: 1   # lab minimum; the HPA adds pods under load
 containerPort: 3000
 revisionHistoryLimit: 5
 metrics:
@@ -36,16 +36,18 @@ probes:
     path: /health/ready
     initialDelaySeconds: 5
     periodSeconds: 5
+# Sized for a local demo: idle Flask/gunicorn uses ~60 MiB and a few millicores. Keep the memory request
+# above idle / memoryUtilization (60 / 0.75 = 80 MiB), or the HPA scales to maxReplicas while idle.
 resources:
   requests:
-    cpu: 100m
+    cpu: 50m
     memory: 128Mi
   limits:
-    cpu: 1000m
-    memory: 512Mi
+    cpu: 500m
+    memory: 256Mi
 autoscaling:
   enabled: true
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 8
   cpuUtilization: 60
   memoryUtilization: 75
@@ -63,19 +65,21 @@ autoscaling:
           value: 4
           periodSeconds: 30
 quota:
-  requestsCpu: "4"
-  requestsMemory: 4Gi
-  # Allow the eight HPA replicas plus the tenant PostgreSQL pod (1 CPU each).
-  limitsCpu: "10"
-  limitsMemory: 8Gi
+  # Room for 8 HPA replicas + 2 rolling-update extras, the tenant PostgreSQL pod and the Helm test pod.
+  requestsCpu: "1"
+  requestsMemory: 2Gi
+  limitsCpu: "6"
+  limitsMemory: 4Gi
   pods: "20"
 serviceMonitor:
   enabled: true
   release: prometheus
   path: /metrics
   interval: 15s
+# maxUnavailable (not minAvailable): with a single replica, minAvailable: 1 would make every node drain hang.
+# When the HPA has scaled out, at most one pod is evicted at a time.
 pdb:
-  minAvailable: 1
+  maxUnavailable: 1
 limitRange:
   enabled: true
   defaultRequest: {cpu: 100m, memory: 128Mi}
@@ -106,8 +110,8 @@ database:
   mountPath: /var/lib/postgresql/data
   pgdata: /var/lib/postgresql/data/pgdata
   resources:
-    requests: {cpu: 250m, memory: 256Mi}
-    limits: {cpu: "1", memory: 1Gi}
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
   startupProbe:
     periodSeconds: 10
     timeoutSeconds: 3
@@ -132,5 +136,5 @@ eventPublisher:
   backoffLimit: 3
   activeDeadlineSeconds: 120
   resources:
-    requests: {cpu: 50m, memory: 64Mi}
-    limits: {cpu: 250m, memory: 256Mi}
+    requests: {cpu: 50m, memory: 64Mi}   # LimitRange minimum in the tenant namespace
+    limits: {cpu: 250m, memory: 128Mi}

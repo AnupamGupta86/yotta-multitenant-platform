@@ -6,12 +6,18 @@ grafana:
   rbac:
     namespaced: true
   sidecar:
+    resources:
+      requests: {cpu: 10m, memory: 48Mi}
+      limits: {cpu: 100m, memory: 128Mi}
     dashboards:
       searchNamespace: observability
     datasources:
       searchNamespace: observability
   persistence:
     enabled: false
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 384Mi}
   grafana.ini:
     server:
       root_url: https://grafana.myyotta.com:8443
@@ -51,6 +57,9 @@ prometheus:
       matchLabels:
         release: prometheus
     retention: 3d
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: "1", memory: 1Gi}
 alertmanager:
   ingress:
     enabled: true
@@ -65,7 +74,17 @@ alertmanager:
         hosts: [alertmanager.myyotta.com]
   alertmanagerSpec:
     externalUrl: https://alertmanager.myyotta.com:8443
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {cpu: 100m, memory: 128Mi}
+prometheusOperator:
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 192Mi}
 kube-state-metrics:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 128Mi}
   collectors:
     - certificatesigningrequests
     - configmaps
@@ -95,5 +114,8 @@ kube-state-metrics:
     - validatingwebhookconfigurations
     - volumeattachments
 prometheus-node-exporter:
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {cpu: 100m, memory: 64Mi}
   hostNetwork: false
   hostPID: false

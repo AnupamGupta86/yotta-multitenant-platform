@@ -1,4 +1,6 @@
 FROM fluent/fluentd:v1.20.1-debian-1.0
+# Build-time only: apt must not prompt (no terminal during docker build)
+ARG DEBIAN_FRONTEND=noninteractive
 USER 0
 RUN apt-get update \
     && apt-get upgrade -y \

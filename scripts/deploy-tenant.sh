@@ -3,7 +3,9 @@
 # HELM_MODE=diff (Review changes job) only shows what the tenant upgrade would change, then exits.
 set -euo pipefail
 
-DEFAULT_ORCHESTRATOR_IMAGE=yotta/website-orchestrator:local
+# Default: the image the running website-orchestrator uses (setup tags local images per run)
+DEFAULT_ORCHESTRATOR_IMAGE="$(kubectl get deployment website-orchestrator --namespace platform \
+  -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 DEFAULT_CLUSTER_NAME=yotta-platform
 TENANT_CHART=helm/website-app
 HEALTH_PATH=/health/ready
@@ -26,6 +28,7 @@ tenant="${1:?usage: deploy-tenant.sh <tenant> <domain> <image> [event-image] [co
 domain="${2:?domain is required}"
 image="${3:?image is required}"
 orchestrator_image="${4:-$DEFAULT_ORCHESTRATOR_IMAGE}"
+[[ -n "$orchestrator_image" ]] || { echo "No orchestrator image: pass it as the 4th argument, or deploy the platform first" >&2; exit 2; }
 correlation_id="${5:-}"
 namespace="$tenant"
 release="$tenant"
@@ -96,8 +99,11 @@ failure_rollback() {
     echo "Deployment failed for $tenant; restoring last successful release" >&2
     if [[ -n "$previous_revision" ]]; then
       helm rollback "$release" "$previous_revision" --namespace "$namespace" --wait --timeout "$ROLLBACK_TIMEOUT" || true
-    else
+    elif helm status "$release" --namespace "$namespace" >/dev/null 2>&1; then
+      # First install that got as far as Helm: remove the half-installed release
       helm uninstall "$release" --namespace "$namespace" || true
+    else
+      echo "Nothing to roll back: $release was never installed (the deployment failed before Helm ran)" >&2
     fi
   fi
   exit "$status"

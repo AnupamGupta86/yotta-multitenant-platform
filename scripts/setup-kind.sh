@@ -20,8 +20,11 @@ PLATFORM_NAMESPACE=platform
 ORCHESTRATOR_TOKEN_SECRET=orchestrator-github-token
 PLATFORM_TIMEOUT=15m
 WEBSITE_ORCHESTRATOR_DEPLOYMENT=website-orchestrator
-WEBSITE_ORCHESTRATOR_IMAGE=yotta/website-orchestrator:local
-FLUENTD_IMAGE=yotta/fluentd-loki:local
+# A new tag per setup run: re-using one fixed tag (":local") leaves pods started earlier on the old image,
+# because an unchanged Deployment spec triggers no rollout. setup-local-e2e.sh passes its own tag in.
+LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-local-$(date -u +%Y%m%d%H%M%S)}"
+WEBSITE_ORCHESTRATOR_IMAGE="yotta/website-orchestrator:$LOCAL_IMAGE_TAG"
+FLUENTD_IMAGE="yotta/fluentd-loki:$LOCAL_IMAGE_TAG"
 FLUENTD_DOCKERFILE=images/fluentd-loki/Dockerfile
 FLUENTD_BUILD_CONTEXT=images/fluentd-loki
 WEBSITE_ORCHESTRATOR_BUILD_CONTEXT=services/website-orchestrator
@@ -37,7 +40,8 @@ source "$script_dir/helm-retry.sh"
 for tool in "${REQUIRED_TOOLS[@]}"; do
   command -v "$tool" >/dev/null || { echo "Install $tool and retry" >&2; exit 1; }
 done
-docker info >/dev/null 2>&1 || { echo "Start Docker Desktop before setup" >&2; exit 1; }
+# shellcheck source=scripts/check-docker.sh
+source "$script_dir/check-docker.sh"   # Colima or Docker Desktop: reachable, started, sized
 : "${ORCHESTRATOR_REPOSITORY:?Set ORCHESTRATOR_REPOSITORY to owner/repository}"
 : "${ORCHESTRATOR_GITHUB_TOKEN:?Set ORCHESTRATOR_GITHUB_TOKEN to a fine-grained token with Actions write access}"
 
@@ -47,6 +51,14 @@ elif kubectl get daemonset calico-node --namespace kube-system >/dev/null 2>&1 &
   echo "This Kind cluster has Calico installed from raw manifests. Back up any demo data, then recreate the cluster to switch CNI ownership to Helm." >&2
   exit 2
 fi
+# After a Colima or Docker restart the Kind node containers stay stopped: start them again
+# (deploy-cluster-addons.sh then waits until every node is Ready)
+for node in $(kind get nodes --name "$cluster_name"); do
+  if [ "$(docker inspect --format '{{.State.Status}}' "$node" 2>/dev/null)" != running ]; then
+    echo "Starting stopped Kind node container $node"
+    docker start "$node" >/dev/null
+  fi
+done
 kubectl cluster-info --context "kind-$cluster_name"
 
 "$ADDONS_SCRIPT"
@@ -64,6 +76,8 @@ kind load docker-image "$WEBSITE_ORCHESTRATOR_IMAGE" --name "$cluster_name"
 
 helm upgrade --install "$PLATFORM_RELEASE" "$PLATFORM_CHART" \
   --namespace "$PLATFORM_NAMESPACE" --create-namespace --take-ownership \
+  --set-string images.websiteOrchestrator="$WEBSITE_ORCHESTRATOR_IMAGE" \
+  --set-string images.fluentd="$FLUENTD_IMAGE" \
   --set-string orchestrator.repository="$ORCHESTRATOR_REPOSITORY" \
   --set-string notification.webhookUrl="$NOTIFICATION_WEBHOOK_URL" \
   --wait --timeout "$PLATFORM_TIMEOUT"

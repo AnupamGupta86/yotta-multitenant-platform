@@ -45,7 +45,7 @@ Published images use a timestamped version such as `1.0.0-20261116010802`: the b
 
 ## Scaling and observability
 
-Every website deployment requests CPU and memory. Its HPA scales on both metrics, within the configured tenant quota. The Python load generator calls the CPU workload endpoint so the HPA can be observed under load. A PodDisruptionBudget protects availability during voluntary updates.
+Every website deployment requests CPU and memory. Its HPA scales on both metrics, within the configured tenant quota. The Python load generator calls the CPU workload endpoint so the HPA can be observed under load. A PodDisruptionBudget (`maxUnavailable: 1`) limits voluntary evictions to one pod at a time without blocking node drains at the lab default of one replica.
 
 Prometheus Operator scrapes each tenant's ServiceMonitor. Grafana includes website request, replica, and log panels. Fluentd reads container logs, adds Kubernetes metadata, and sends them to Loki.
 

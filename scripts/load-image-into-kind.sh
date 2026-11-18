@@ -9,16 +9,28 @@
 # loaded into Kind then contains exactly one platform.
 #
 # Usage: scripts/load-image-into-kind.sh <registry/owner/name:tag> <kind-cluster-name>
-# Needs: docker (logged in to the registry if the image is private), kind.
+# Needs: docker (logged in to the registry if the image is private), kind, python3.
 set -euo pipefail
 
 image="${1:?usage: $0 <image:tag> <kind-cluster-name>}"
 cluster="${2:?usage: $0 <image:tag> <kind-cluster-name>}"
 repository="${image%:*}"
 
+# Every node container must be running: after a Colima or Docker restart, Kind node containers stay
+# stopped, and `docker exec` into them fails with exit code 125 and no hint.
+nodes="$(kind get nodes --name "$cluster")"
+[[ -n "$nodes" ]] || { echo "::error::no nodes found for Kind cluster '$cluster'" >&2; exit 1; }
+for each_node in $nodes; do
+  state="$(docker inspect --format '{{.State.Status}}' "$each_node" 2>&1 || true)"
+  if [[ "$state" != running ]]; then
+    echo "::error::Kind node container '$each_node' is '$state', not running (Colima/Docker was restarted?)." >&2
+    echo "Start it on the Mac: docker start $each_node && kubectl wait --for=condition=Ready nodes --all --timeout=180s" >&2
+    exit 1
+  fi
+done
+
 # The nodes' CPU architecture, as the registry names it
-node="$(kind get nodes --name "$cluster" | head -n 1)"
-[[ -n "$node" ]] || { echo "no nodes found for Kind cluster '$cluster'" >&2; exit 1; }
+node="$(printf '%s\n' "$nodes" | head -n 1)"
 case "$(docker exec "$node" uname -m)" in
   aarch64 | arm64) arch=arm64 ;;
   x86_64 | amd64) arch=amd64 ;;
@@ -39,9 +51,15 @@ fi
 # For a multi-platform image, find the digest of the linux/<arch> manifest. Attestation
 # entries are listed as unknown/unknown, so they never match. A single-platform image has
 # no list at all, and is simply pulled as it is.
-digest="$(docker buildx imagetools inspect "$image" --format \
-  '{{range .Manifest.Manifests}}{{if .Platform}}{{.Platform.OS}}/{{.Platform.Architecture}} {{.Digest}}{{"\n"}}{{end}}{{end}}' \
-  | awk -v want="linux/$arch" '$1 == want { print $2; exit }')"
+# Uses `docker manifest inspect`, which every docker CLI has (Homebrew's docker for Colima has no buildx).
+digest="$(docker manifest inspect "$image" | python3 -c '
+import json, sys
+want = sys.argv[1]
+for entry in json.load(sys.stdin).get("manifests") or []:
+    platform = entry.get("platform") or {}
+    if "%s/%s" % (platform.get("os"), platform.get("architecture")) == want:
+        print(entry["digest"])
+        break' "linux/$arch")"
 
 if [[ -n "$digest" ]]; then
   echo "Pulling $image for linux/$arch only ($digest)"

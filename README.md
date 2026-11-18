@@ -72,7 +72,10 @@ docs/                deployment, architecture, rollback, proof of work
 
 ### Option A: everything locally in one command
 
-Needs Docker Desktop, Kind, kubectl, Helm 4.x and Python 3.12+ on the Mac.
+Needs a Docker engine (Colima or Docker Desktop), Kind, kubectl, Helm 4.x and Python 3.12+ on the Mac.
+With Colima: `brew install colima docker kind kubectl helm`. The setup scripts start Colima if it is stopped
+(4 CPU, 8 GiB memory, 60 GiB disk; change with `COLIMA_CPU`, `COLIMA_MEMORY`, `COLIMA_DISK`), switch the docker CLI
+to the `colima` context, and raise the VM's inotify limits that a two-node Kind cluster needs.
 
 ```sh
 ./scripts/setup-local-e2e.sh          # Kind cluster, add-ons, monitoring, platform, provisioning API, user1-3
@@ -117,8 +120,8 @@ More detail: [docs/deployment.md](docs/deployment.md).
 
 ## Scaling
 
-Each tenant has an HPA (2–8 replicas, CPU 60 %, memory 75 %, fast scale-up, 2-minute scale-down window),
-a ResourceQuota and LimitRange, and a PodDisruptionBudget so at least one pod stays up during node drains.
+Each tenant has an HPA (1–8 replicas, CPU 60 %, memory 75 %, fast scale-up, 2-minute scale-down window),
+a ResourceQuota and LimitRange, and a PodDisruptionBudget that evicts at most one pod at a time during node drains (`maxUnavailable: 1`; with the lab default of 1 replica a drain is not blocked).
 
 ```sh
 kubectl get hpa -n user1 -w

@@ -2,7 +2,7 @@
 
 The deployment job uses a **self-hosted Mac runner** with the labels `self-hosted`, `macOS`, and `yotta-local-k8s`. GitHub-hosted runners validate and publish the image; the Mac runner is only used for deployment into the Kind cluster running on that Mac. Intel and Apple Silicon Macs are both supported.
 
-Install Docker Desktop, Kind, kubectl, and Helm 4.x on the same Mac account that owns the cluster. The deployment scripts were validated with Helm 4.3.0; tenant upgrades use client-side apply so Helm does not conflict with the HPA when it changes a Deployment's replica count.
+Install a Docker engine (Colima: `brew install colima docker`, or Docker Desktop), Kind, kubectl, and Helm 4.x on the same Mac account that owns the cluster. With Colima, give the VM enough room for the platform: `colima start --cpu 4 --memory 8 --disk 60` (the setup scripts do this when Colima is stopped). If Docker Desktop was installed before, remove `"credsStore": "desktop"` from `~/.docker/config.json`, or `docker pull` fails with "docker-credential-desktop not found". A runner installed as a launch agent must see `/opt/homebrew/bin` (colima, docker, kind) in its `PATH`: check `~/actions-runner/.path`. The deployment scripts were validated with Helm 4.3.0; tenant upgrades use client-side apply so Helm does not conflict with the HPA when it changes a Deployment's replica count.
 
 ## Register the runner
 

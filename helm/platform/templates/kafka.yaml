@@ -78,6 +78,7 @@ spec:
             - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: {{ .Values.kafka.transactionMinIsr | quote }}}
             - {name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: {{ .Values.kafka.groupInitialRebalanceDelayMs | quote }}}
             - {name: KAFKA_NUM_PARTITIONS, value: {{ .Values.kafka.numPartitions | quote }}}
+            - {name: KAFKA_HEAP_OPTS, value: {{ .Values.kafka.heapOpts | quote }}}
           readinessProbe:
             exec:
               command: [sh, -c, "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:{{ .Values.kafka.ports.internal }} --list >/dev/null 2>&1"]
