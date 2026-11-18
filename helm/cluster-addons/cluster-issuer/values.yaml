@@ -1,0 +1,3 @@
+# Release: cluster-issuer, namespace: cert-manager. Installed by scripts/deploy-cluster-addons.sh right after the
+# cert-manager chart (it needs cert-manager's CRDs). Ingresses refer to it with cert-manager.io/cluster-issuer.
+name: local-selfsigned

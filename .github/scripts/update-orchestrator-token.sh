@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Store the orchestrator's GitHub token as a Kubernetes Secret, without putting it in Helm values
-# or on a command line. The orchestrator uses it to start Website App Deployment for each website
+# or on a command line. The orchestrator uses it to start Website Deployment for each website
 # request, so it must be the long-lived ORCHESTRATOR_GITHUB_TOKEN secret, not the job's GITHUB_TOKEN
 # (which GitHub revokes when the job ends).
 set -euo pipefail

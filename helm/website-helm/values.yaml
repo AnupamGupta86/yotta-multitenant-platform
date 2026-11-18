@@ -1,0 +1,120 @@
+tenant:
+  name: user1
+image:
+  repository: ghcr.io/owner/website
+  tag: latest
+  pullPolicy: IfNotPresent
+replicaCount: 1   # lab minimum; the HPA adds pods under load
+containerPort: 3000
+revisionHistoryLimit: 5
+metrics:
+  enabled: true
+  path: /metrics
+ingress:
+  enabled: true
+  className: nginx
+  host: user1.myyotta.com
+  clusterIssuer: local-selfsigned
+  path: /
+  pathType: Prefix
+  tlsSecretSuffix: tls
+service:
+  type: ClusterIP
+  port: 80
+  targetPortName: http
+probes:
+  startup:
+    path: /health/live
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 60
+  liveness:
+    path: /health/live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    path: /health/ready
+    initialDelaySeconds: 5
+    periodSeconds: 5
+# Sized for a local demo: idle Flask/gunicorn uses ~60 MiB and a few millicores. Keep the memory request
+# above idle / memoryUtilization (60 / 0.75 = 80 MiB), or the HPA scales to maxReplicas while idle.
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 8
+  cpuUtilization: 60
+  memoryUtilization: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+quota:
+  # Room for 8 HPA replicas + 2 rolling-update extras and the Helm test pod.
+  requestsCpu: "1"
+  requestsMemory: 2Gi
+  limitsCpu: "6"
+  limitsMemory: 4Gi
+  pods: "20"
+serviceMonitor:
+  enabled: true
+  release: prometheus
+  path: /metrics
+  interval: 15s
+# maxUnavailable (not minAvailable): with a single replica, minAvailable: 1 would make every node drain hang.
+# When the HPA has scaled out, at most one pod is evicted at a time.
+pdb:
+  maxUnavailable: 1
+limitRange:
+  enabled: true
+  defaultRequest: {cpu: 100m, memory: 128Mi}
+  default: {cpu: 500m, memory: 512Mi}
+  max: {cpu: "2", memory: 1Gi}
+  min: {cpu: 50m, memory: 64Mi}
+networkPolicy:
+  enabled: true
+  appPolicyName: website
+  ingressNamespaces:
+    - ingress-nginx
+    - observability
+  dnsNamespace: kube-system
+  dnsPodLabel: k8s-app
+  dnsPodLabelValue: kube-dns
+  dnsUdpPort: 53
+  dnsTcpPort: 53
+# Platform database (helm/database-helm in platform-data); tenants no longer run their own PostgreSQL
+platformDatabase:
+  host: postgresql.platform-data.svc.cluster.local
+  namespace: platform-data
+  port: 5432
+  name: myyotta_platform
+  user: myyotta_app
+  secretName: myyotta-postgresql-secret
+  secretKey: POSTGRES_PASSWORD
+eventPublisher:
+  enabled: false
+  image: yotta/website-orchestrator:local
+  imagePullPolicy: IfNotPresent
+  bootstrapServers: kafka.platform.svc.cluster.local:19092
+  eventType: WebsiteCreated
+  correlationId: ""
+  backoffLimit: 3
+  activeDeadlineSeconds: 120
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}   # LimitRange minimum in the tenant namespace
+    limits: {cpu: 250m, memory: 128Mi}

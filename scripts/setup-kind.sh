@@ -14,8 +14,14 @@ PROMETHEUS_RELEASE=prometheus
 PROMETHEUS_CHART=kube-prometheus-stack
 PROMETHEUS_NAMESPACE=observability
 PROMETHEUS_TIMEOUT=15m
-PLATFORM_RELEASE=platform
-PLATFORM_CHART=helm/platform
+DASHBOARDS_RELEASE=grafana-dashboards
+DASHBOARDS_CHART=helm/monitoring/grafana-dashboards
+LOGGING_RELEASE=logging
+LOGGING_CHART=helm/logging-helm
+KAFKA_RELEASE=kafka
+KAFKA_CHART=helm/kafka-helm
+WEBSITE_ORCHESTRATOR_RELEASE=website-orchestrator
+WEBSITE_ORCHESTRATOR_CHART=helm/website-orchestrator-helm
 PLATFORM_NAMESPACE=platform
 ORCHESTRATOR_TOKEN_SECRET=orchestrator-github-token
 PLATFORM_TIMEOUT=15m
@@ -25,8 +31,8 @@ WEBSITE_ORCHESTRATOR_DEPLOYMENT=website-orchestrator
 LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-local-$(date -u +%Y%m%d%H%M%S)}"
 WEBSITE_ORCHESTRATOR_IMAGE="yotta/website-orchestrator:$LOCAL_IMAGE_TAG"
 FLUENTD_IMAGE="yotta/fluentd-loki:$LOCAL_IMAGE_TAG"
-FLUENTD_DOCKERFILE=images/fluentd-loki/Dockerfile
-FLUENTD_BUILD_CONTEXT=images/fluentd-loki
+FLUENTD_DOCKERFILE=helm/logging-helm/image/Dockerfile
+FLUENTD_BUILD_CONTEXT=helm/logging-helm/image
 WEBSITE_ORCHESTRATOR_BUILD_CONTEXT=services/website-orchestrator
 ROLLOUT_TIMEOUT=5m
 OBSERVABILITY_UIS="https://grafana.myyotta.com:8443 https://prometheus.myyotta.com:8443 https://alertmanager.myyotta.com:8443"
@@ -61,6 +67,9 @@ for node in $(kind get nodes --name "$cluster_name"); do
 done
 kubectl cluster-info --context "kind-$cluster_name"
 
+# Clusters from before the chart split: remove the old single "platform" release first (Kafka data is kept)
+LEGACY_PLATFORM_RELEASE_NAME=platform PLATFORM_NAMESPACE="$PLATFORM_NAMESPACE" \
+  bash "$script_dir/../.github/scripts/remove-legacy-platform-release.sh"
 "$ADDONS_SCRIPT"
 helm_retry helm repo add "$PROMETHEUS_REPOSITORY" "$PROMETHEUS_REPOSITORY_URL" --force-update
 helm_retry helm repo update "$PROMETHEUS_REPOSITORY"
@@ -74,11 +83,20 @@ kind load docker-image "$FLUENTD_IMAGE" --name "$cluster_name"
 docker build -t "$WEBSITE_ORCHESTRATOR_IMAGE" "$WEBSITE_ORCHESTRATOR_BUILD_CONTEXT"
 kind load docker-image "$WEBSITE_ORCHESTRATOR_IMAGE" --name "$cluster_name"
 
-helm upgrade --install "$PLATFORM_RELEASE" "$PLATFORM_CHART" \
-  --namespace "$PLATFORM_NAMESPACE" --create-namespace --take-ownership \
-  --set-string images.websiteOrchestrator="$WEBSITE_ORCHESTRATOR_IMAGE" \
+helm upgrade --install "$DASHBOARDS_RELEASE" "$DASHBOARDS_CHART" \
+  --namespace "$PROMETHEUS_NAMESPACE" --take-ownership --wait --timeout "$ROLLOUT_TIMEOUT"
+helm upgrade --install "$LOGGING_RELEASE" "$LOGGING_CHART" \
+  --namespace "$PROMETHEUS_NAMESPACE" --create-namespace --take-ownership \
   --set-string images.fluentd="$FLUENTD_IMAGE" \
-  --set-string orchestrator.repository="$ORCHESTRATOR_REPOSITORY" \
+  --wait --timeout "$PLATFORM_TIMEOUT"
+helm upgrade --install "$KAFKA_RELEASE" "$KAFKA_CHART" \
+  --namespace "$PLATFORM_NAMESPACE" --create-namespace --take-ownership \
+  --wait --timeout "$PLATFORM_TIMEOUT"
+# Website orchestrator: its own chart and release, next to Kafka in the platform namespace
+helm upgrade --install "$WEBSITE_ORCHESTRATOR_RELEASE" "$WEBSITE_ORCHESTRATOR_CHART" \
+  --namespace "$PLATFORM_NAMESPACE" --take-ownership \
+  --set-string image="$WEBSITE_ORCHESTRATOR_IMAGE" \
+  --set-string github.repository="$ORCHESTRATOR_REPOSITORY" \
   --set-string notification.webhookUrl="$NOTIFICATION_WEBHOOK_URL" \
   --wait --timeout "$PLATFORM_TIMEOUT"
 printf '%s' "$ORCHESTRATOR_GITHUB_TOKEN" \

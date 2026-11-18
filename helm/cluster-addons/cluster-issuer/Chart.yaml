@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cluster-issuer
+description: cert-manager ClusterIssuer that signs the local HTTPS certificates of every Ingress
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

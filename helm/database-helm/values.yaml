@@ -1,0 +1,67 @@
+# myyotta platform database. Every name below comes from the platform naming list; the CD pipeline
+# sets the same values from .github/pipeline-config.env (DATABASE_*), so the two can never drift apart.
+#   Platform myyotta | Database myyotta_platform | User myyotta_app | Namespace platform-data
+#   Helm release myyotta-postgresql | Service postgresql
+replicaCount: 1
+
+image:
+  # Built from services/database/Dockerfile (postgres:16 + the schema). CD sets the GHCR image and tag.
+  repository: myyotta-postgresql
+  tag: local
+  pullPolicy: IfNotPresent
+
+database:
+  name: myyotta_platform
+  user: myyotta_app
+
+secret:
+  # true: the chart creates the Secret with a random password once and keeps it (helm.sh/resource-policy: keep),
+  # so upgrades and reinstalls reuse the password the data on the volume was created with.
+  # false: create it yourself (kubectl create secret generic <name> --from-literal=<key>=...).
+  create: true
+  name: myyotta-postgresql-secret
+  key: POSTGRES_PASSWORD
+  passwordLength: 32
+
+service:
+  name: postgresql
+  type: ClusterIP
+  port: 5432
+
+persistence:
+  enabled: true
+  size: 5Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""   # empty = the cluster's default StorageClass (Kind: standard)
+
+# Lab minimum (idle PostgreSQL uses ~30-40 MiB); shared_buffers (128 MiB) fits inside the limit
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+networkPolicy:
+  enabled: true
+  # Pods in any namespace that carry this label may connect on 5432 (the provisioning API, the orchestrator
+  # and every tenant website set it); other pods are blocked. The database's own namespace is always allowed.
+  clientPodLabel:
+    myyotta.io/database-client: "true"
+
+podSecurityContext:
+  fsGroup: 999
+  runAsNonRoot: true
+  runAsUser: 999
+  runAsGroup: 999
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true   # writable paths: the data volume, /var/run/postgresql and /tmp (emptyDir)
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL

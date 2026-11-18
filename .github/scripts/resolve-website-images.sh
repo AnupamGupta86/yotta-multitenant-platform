@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
 # Decide which images a tenant deployment uses, and export them as IMAGE and ORCHESTRATOR_IMAGE.
 #
-#   website-app image (IMAGE_TAG)
+#   website image (IMAGE_TAG)
 #     given  -> that tag (checked against the CI format)
-#     empty  -> the newest published version tag of website-app in GHCR
+#     empty  -> the newest published version tag of website in GHCR
 #   website-orchestrator image (ORCHESTRATOR_IMAGE_TAG; runs the job that publishes WebsiteCreated)
 #     given  -> that tag
 #     empty  -> exactly the image the running website-orchestrator deployment uses, so a tenant
 #               deployment never changes or depends on a different orchestrator version
 #
-# Needs: CONTAINER_REGISTRY, GITHUB_REPOSITORY_OWNER, WEBSITE_APP_IMAGE, WEBSITE_ORCHESTRATOR_IMAGE,
+# Needs: CONTAINER_REGISTRY, GITHUB_REPOSITORY_OWNER, WEBSITE_IMAGE, WEBSITE_ORCHESTRATOR_IMAGE,
 #        PLATFORM_NAMESPACE, WEBSITE_ORCHESTRATOR_DEPLOYMENT, GHCR_TOKEN; kubectl, curl, python3.
 set -euo pipefail
 
 owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
 validate="$(dirname "$0")/validate-image-tag.sh"
 
-# ---- website-app
+# ---- website
 if [[ -n "${IMAGE_TAG:-}" ]]; then
   bash "$validate" "$IMAGE_TAG"
   app_tag="$IMAGE_TAG"
   app_source="requested"
 else
-  app_tag="$(bash "$(dirname "$0")/newest-image-tag.sh" "$WEBSITE_APP_IMAGE")"
+  app_tag="$(bash "$(dirname "$0")/newest-image-tag.sh" "$WEBSITE_IMAGE")"
   if [[ -z "$app_tag" ]]; then
-    echo "::error::No published $WEBSITE_APP_IMAGE image with a version tag was found. Run Website App CI, or pass image_tag."
+    echo "::error::No published $WEBSITE_IMAGE image with a version tag was found. Run Website CI, or pass image_tag."
     exit 1
   fi
   app_source="newest published"
@@ -45,13 +45,13 @@ else
   orchestrator_source="currently deployed"
 fi
 
-image="$CONTAINER_REGISTRY/$owner/$WEBSITE_APP_IMAGE:$app_tag"
+image="$CONTAINER_REGISTRY/$owner/$WEBSITE_IMAGE:$app_tag"
 {
   echo "IMAGE=$image"
   echo "ORCHESTRATOR_IMAGE=$orchestrator_image"
 } >> "${GITHUB_ENV:-/dev/stdout}"
 {
   echo "### Images for this deployment"
-  echo "- website-app: \`$image\` ($app_source)"
+  echo "- website: \`$image\` ($app_source)"
   echo "- website-orchestrator: \`$orchestrator_image\` ($orchestrator_source)"
 } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"

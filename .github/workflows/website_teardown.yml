@@ -1,0 +1,104 @@
+name: Website Teardown
+# Started by the orchestrator for DELETE /api/v1/websites (event WebsiteDeletionRequested), or by hand.
+# review (what will be deleted, no approval) -> teardown (approval) -> helm uninstall, namespace delete,
+# then WebsiteDeleted on Kafka, so the orchestrator removes the website from the platform database.
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: Tenant (namespace and Helm release) of the website to delete
+        type: string
+        required: true
+      domain:
+        description: The website's domain (for the WebsiteDeleted event)
+        type: string
+        required: true
+      correlation_id:
+        description: Deletion request event ID
+        type: string
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: local-platform-release
+  cancel-in-progress: false
+jobs:
+  review:
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # No approval: proves the target is a tenant website and lists everything that will be deleted
+    env:
+      TENANT: ${{ inputs.tenant }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Refuse anything that is not a tenant website
+        run: bash .github/scripts/check-teardown-target.sh "$TENANT"
+      - name: "Will be deleted: the tenant's Helm release and namespace"
+        run: |
+          {
+            echo "### Website Teardown: $TENANT"
+            echo 'Approving deletes the Helm release and the whole namespace below.'
+            echo '```'
+            helm list --namespace "$TENANT"
+            kubectl get all,ingress,pvc,secret,configmap --namespace "$TENANT" 2>&1
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+  teardown:
+    needs: review
+    if: needs.review.result == 'success'
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # Manual approval: the same reviewers as website deployments (environment website-deployment)
+    environment:
+      name: website-deployment
+    timeout-minutes: 20
+    env:
+      TENANT: ${{ inputs.tenant }}
+      DOMAIN: ${{ inputs.domain }}
+      CORRELATION_ID: ${{ inputs.correlation_id || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Check the target again after approval
+        run: bash .github/scripts/check-teardown-target.sh "$TENANT"
+      - name: Uninstall the website and delete its namespace
+        run: |
+          helm uninstall "$TENANT" --namespace "$TENANT" --wait --timeout "$SERVICE_HELM_TIMEOUT"
+          # Removes everything left in it as well (copied database Secret, TLS Secret, test pods)
+          kubectl delete namespace "$TENANT" --wait=true --timeout=5m
+          echo "### Deleted website $TENANT ($DOMAIN)" >> "$GITHUB_STEP_SUMMARY"
+      # Same pattern as Website Deployment: the Mac's python3 in a throwaway virtual environment
+      - name: Install the Kafka event publisher
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --quiet --disable-pip-version-check \
+            -r services/website-orchestrator/requirements.txt
+      - name: Publish WebsiteDeleted (the orchestrator then removes the website from the database)
+        run: |
+          if nc -z 127.0.0.1 "$KAFKA_FORWARD_LOCAL_PORT"; then
+            echo "Kafka already reachable on 127.0.0.1:$KAFKA_FORWARD_LOCAL_PORT"
+          else
+            kubectl port-forward --namespace "$PLATFORM_NAMESPACE" service/"$KAFKA_SERVICE_NAME" \
+              "${KAFKA_FORWARD_LOCAL_PORT}:${KAFKA_EXTERNAL_PORT}" > /tmp/kafka-teardown-forward.log 2>&1 &
+            echo "$!" > /tmp/kafka-teardown-forward.pid
+            for _ in $(seq 1 30); do nc -z 127.0.0.1 "$KAFKA_FORWARD_LOCAL_PORT" && break; sleep 1; done
+          fi
+          args=(--tenant "$TENANT" --domain "$DOMAIN" --event-type WebsiteDeleted
+                --bootstrap-servers "127.0.0.1:$KAFKA_FORWARD_LOCAL_PORT")
+          [ -n "$CORRELATION_ID" ] && args+=(--correlation-id "$CORRELATION_ID")
+          "$RUNNER_TEMP/venv/bin/python" services/website-orchestrator/publish_event.py "${args[@]}"
+      - name: Stop the Kafka port-forward
+        if: always()
+        run: |
+          if [ -f /tmp/kafka-teardown-forward.pid ]; then
+            kill "$(cat /tmp/kafka-teardown-forward.pid)" 2>/dev/null || true
+            rm -f /tmp/kafka-teardown-forward.pid
+          fi

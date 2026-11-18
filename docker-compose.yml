@@ -1,24 +1,27 @@
+# Local run without Kubernetes. The database is the same image Kubernetes runs (services/database:
+# PostgreSQL 16 + schema 001-008); the provisioning API and the orchestrator use it like in the cluster.
 services:
   postgres:
-    image: postgres:16-alpine
+    build: ./services/database
     environment:
-      POSTGRES_USER: platform
       POSTGRES_PASSWORD: local-demo-only
-      POSTGRES_DB: platform
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./database/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U platform"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U myyotta_app -d myyotta_platform"]
       interval: 5s
       timeout: 3s
       retries: 10
-  website-provisioning:
-    build: ./services/website-provisioning
+  hosting-platform:
+    build: ./services/hosting-platform
     environment:
-      DATABASE_URL: postgresql://provisioning:provisioning-local-only@postgres:5432/provisioning
+      DB_HOST: postgres
+      DB_NAME: myyotta_platform
+      DB_USER: myyotta_app
+      DB_PASSWORD: local-demo-only
+      HOST: 0.0.0.0
       PORT: 3000
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
       KAFKA_TOPIC: website-events
@@ -62,13 +65,20 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
       KAFKA_TOPIC: website-events
       GH_REPOSITORY: ${ORCHESTRATOR_REPOSITORY:-}
-      GH_WORKFLOW_NAME: website_app_cd.yml
+      GH_WORKFLOW_NAME: website_cd.yml
+      GH_TEARDOWN_WORKFLOW_NAME: website_teardown.yml
       GH_REF: master
       GH_TOKEN: ${ORCHESTRATOR_GITHUB_TOKEN:-}
       ORCHESTRATOR_DRY_RUN: ${ORCHESTRATOR_DRY_RUN:-true}
       NOTIFICATION_WEBHOOK_URL: ${NOTIFICATION_WEBHOOK_URL:-}
+      DB_HOST: postgres
+      DB_NAME: myyotta_platform
+      DB_USER: myyotta_app
+      DB_PASSWORD: local-demo-only
     depends_on:
       kafka:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 volumes:

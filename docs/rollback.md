@@ -4,7 +4,7 @@ Three levels, from automatic to manual.
 
 ## 1. Automatic, during every tenant deployment
 
-`scripts/deploy-tenant.sh` (used by *Website App Deployment* and the local setup):
+`scripts/deploy-tenant.sh` (used by *Website Deployment* and the local setup):
 
 1. remembers the current Helm revision;
 2. runs `helm upgrade --install … --rollback-on-failure --wait` (`--atomic` on older Helm), so a rollout that
@@ -17,7 +17,7 @@ Three levels, from automatic to manual.
 The previous pods keep serving until new ones are ready (rolling update + PodDisruptionBudget), so a bad
 release never takes the site down.
 
-**Demo it:** run *Website App Deployment* with `simulate_failure=true` (see [proof-of-work.md](proof-of-work.md#3-cicd-with-rollback-and-events)).
+**Demo it:** run *Website Deployment* with `simulate_failure=true` (see [proof-of-work.md](proof-of-work.md#3-cicd-with-rollback-and-events)).
 
 ## 2. Redeploy a known-good version through CD
 
@@ -25,8 +25,8 @@ Every image has an immutable tag `1.0.0-YYYYMMDDHHMMSS`, so "roll back" is "depl
 with the same approval and checks as any deployment:
 
 ```sh
-gh workflow run website_app_cd.yml --ref master -f tenant=user1 -f domain=user1.myyotta.com -f image_tag=<previous tag>
-gh workflow run website_provisioning_cd.yml --ref master -f image_tag=<previous tag>
+gh workflow run website_cd.yml --ref master -f tenant=user1 -f domain=user1.myyotta.com -f image_tag=<previous tag>
+gh workflow run hosting_platform_cd.yml --ref master -f image_tag=<previous tag>
 gh workflow run website_orchestrator_cd.yml --ref master -f image_tag=<previous tag>
 gh workflow run platform_cd.yml --ref master -f image_tag=<previous fluentd tag>
 ```
@@ -41,7 +41,7 @@ helm rollback user1 <revision> -n user1 --wait
 helm status user1 -n user1
 ```
 
-Same for `website-provisioning`, `platform` (namespace `platform`) and `aiops-pod-doctor` (namespace `aiops`).
+Same for `hosting-platform`, `platform` (namespace `platform`) and `aiops-pod-doctor` (namespace `aiops`).
 
 ## What a rollback does not undo
 

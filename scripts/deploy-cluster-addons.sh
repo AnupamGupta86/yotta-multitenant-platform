@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the pinned CNI, ingress, metrics, and certificate-manager charts; run with ./scripts/deploy-cluster-addons.sh from the repository root.
+# Install the pinned CNI, ingress, metrics, and certificate-manager charts, then the local ClusterIssuer chart; run with ./scripts/deploy-cluster-addons.sh from the repository root.
 # HELM_MODE=diff only shows what each upgrade would change (scripts/helm-release.sh) and skips the rollout waits.
 set -euo pipefail
 
@@ -23,6 +23,8 @@ CALICO_RELEASE=calico
 INGRESS_RELEASE=ingress-nginx
 METRICS_RELEASE=metrics-server
 CERT_MANAGER_RELEASE=cert-manager
+CLUSTER_ISSUER_RELEASE=cluster-issuer
+CLUSTER_ISSUER_CHART=helm/cluster-addons/cluster-issuer
 CALICO_NODE_WAIT_ATTEMPTS=60
 CALICO_NODE_WAIT_SECONDS=5
 CALICO_TIMEOUT=10m
@@ -90,3 +92,8 @@ wait_for kubectl rollout status deployment/metrics-server --namespace "$METRICS_
   --version "$CERT_MANAGER_VERSION" --namespace "$CERT_MANAGER_NAMESPACE" --create-namespace \
   --set crds.enabled=true --wait --timeout "$CERT_MANAGER_TIMEOUT"
 wait_for kubectl wait --for=condition=Available deployment --all --namespace "$CERT_MANAGER_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
+
+# Our ClusterIssuer (local-selfsigned) for every Ingress; needs the cert-manager CRDs installed just above.
+# --take-ownership adopts the issuer from the legacy platform release on the first run after the chart split.
+"$script_dir/helm-release.sh" "$CLUSTER_ISSUER_RELEASE" "$CLUSTER_ISSUER_CHART" \
+  --namespace "$CERT_MANAGER_NAMESPACE" --take-ownership --wait --timeout "$ROLLOUT_TIMEOUT"

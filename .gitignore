@@ -12,3 +12,6 @@ output/
 # Local GitHub Actions runner install (binaries, logs, registration): never commit
 
 gh-runner/
+
+# Files moved aside for deletion (delete the folder yourself)
+_to_delete/

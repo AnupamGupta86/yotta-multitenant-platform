@@ -1,0 +1,99 @@
+# CI retrigger marker: 2026-11-16 19:30 IST end-to-end check.
+name: Hosting Platform CI
+on:
+  push:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'services/hosting-platform/**'
+      - 'services/database/**'
+      - 'VERSION'
+      - 'scripts/build-version.sh'
+      - '.trivyignore'
+      - 'helm/hosting-platform-helm/**'
+      - '.github/workflows/hosting_platform_ci.yml'
+      - '.github/workflows/reusable-service-ci.yml'
+      - '.github/pipeline-config.env'
+      - '.github/scripts/**'
+  pull_request:
+    branches: [master, feature, 'feature/**']
+    paths:
+      - 'services/hosting-platform/**'
+      - 'services/database/**'
+      - 'VERSION'
+      - 'scripts/build-version.sh'
+      - '.trivyignore'
+      - 'helm/hosting-platform-helm/**'
+      - '.github/workflows/hosting_platform_ci.yml'
+      - '.github/workflows/reusable-service-ci.yml'
+      - '.github/pipeline-config.env'
+      - '.github/scripts/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  chart-validation:
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ steps.pipeline.outputs.helm_version }}
+      - name: Lint and render the chart
+        run: |
+          helm lint helm/hosting-platform-helm
+          mkdir -p /tmp/rendered-manifests
+          helm template "$HOSTING_PLATFORM_IMAGE" helm/hosting-platform-helm --namespace "$PLATFORM_NAMESPACE" > /tmp/rendered-manifests/hosting-platform.yaml
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Validate rendered resources
+        run: kubeconform -strict -ignore-missing-schemas /tmp/rendered-manifests/hosting-platform.yaml
+      - name: Scan rendered Kubernetes resources for security misconfigurations
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: /tmp/rendered-manifests
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+  api-end-to-end:
+    # The API against the real platform database image and Kafka: every endpoint, the rows, the events
+    needs: chart-validation
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Build the platform database and Provisioning API images
+        run: |
+          docker build -t local/myyotta-postgresql:e2e services/database
+          docker build -t local/hosting-platform:e2e services/hosting-platform
+      - name: Call every endpoint against the real database and Kafka
+        run: bash .github/scripts/provisioning-e2e.sh local/hosting-platform:e2e local/myyotta-postgresql:e2e
+  service:
+    needs: [chart-validation, api-end-to-end]
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'master' || github.head_ref == 'feature' || startsWith(github.head_ref, 'feature/'))) || (github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')))
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/reusable-service-ci.yml
+    with:
+      service: hosting-platform
+      image: hosting-platform

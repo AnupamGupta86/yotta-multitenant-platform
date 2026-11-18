@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMapName }}
+  labels:
+    {{ .Values.sidecarLabel.name }}: {{ .Values.sidecarLabel.value | quote }}
+data:
+  website-platform.json: |
+{{ .Files.Get "files/website-dashboard.json" | indent 4 }}

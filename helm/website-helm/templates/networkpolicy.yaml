@@ -1,0 +1,45 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.networkPolicy.appPolicyName }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: website
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.ingressNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.containerPort }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.dnsNamespace | quote }}
+          podSelector:
+            matchLabels:
+              {{ .Values.networkPolicy.dnsPodLabel }}: {{ .Values.networkPolicy.dnsPodLabelValue | quote }}
+      ports:
+        - protocol: UDP
+          port: {{ .Values.networkPolicy.dnsUdpPort }}
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.dnsTcpPort }}
+    # the platform database only
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.platformDatabase.namespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - protocol: TCP
+          port: {{ .Values.platformDatabase.port }}
+{{- end }}

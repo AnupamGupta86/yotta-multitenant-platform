@@ -47,9 +47,9 @@ jobs:
           version: ${{ steps.pipeline.outputs.helm_version }}
       - name: Lint and render the chart
         run: |
-          helm lint aiops-pod-doctor/helm
+          helm lint aiops-pod-doctor/aiops-pod-doctor-helm
           mkdir -p /tmp/rendered-manifests
-          helm template "$AIOPS_DEPLOYMENT" aiops-pod-doctor/helm --namespace "$AIOPS_NAMESPACE" > /tmp/rendered-manifests/aiops-pod-doctor.yaml
+          helm template "$AIOPS_DEPLOYMENT" aiops-pod-doctor/aiops-pod-doctor-helm --namespace "$AIOPS_NAMESPACE" > /tmp/rendered-manifests/aiops-pod-doctor.yaml
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ steps.pipeline.outputs.go_version }}

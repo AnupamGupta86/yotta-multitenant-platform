@@ -62,7 +62,7 @@ echo "Writing evidence to $out/"
   set -- $TENANTS
   if [[ $# -ge 2 ]]; then
     run "Isolation: $1 app -> $2-postgres.$2:5432 (expected: blocked)" \
-      kubectl exec -n "$1" deploy/"$1"-app -- python -c "
+      kubectl exec -n "$1" deploy/"$1"-website -- python -c "
 import socket
 try:
     socket.create_connection(('$2-postgres.$2.svc.cluster.local', 5432), timeout=4)
@@ -96,8 +96,8 @@ except OSError as error:
 # ---------------------------------------------------------------- 3. CI/CD with rollback and events
 {
   if command -v gh >/dev/null; then
-    for workflow in website_app_ci.yml website_provisioning_ci.yml website_orchestrator_ci.yml platform_ci.yml \
-                    platform_cd.yml website_orchestrator_cd.yml website_provisioning_cd.yml website_app_cd.yml; do
+    for workflow in website_ci.yml hosting_platform_ci.yml website_orchestrator_ci.yml platform_ci.yml \
+                    platform_cd.yml website_orchestrator_cd.yml hosting_platform_cd.yml website_cd.yml; do
       run "Recent runs: $workflow" gh run list --workflow "$workflow" --limit 5
     done
   else

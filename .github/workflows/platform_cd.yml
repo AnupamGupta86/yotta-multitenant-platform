@@ -37,11 +37,18 @@ jobs:
           go-version: ${{ steps.pipeline.outputs.go_version }}
       - name: Install Kubernetes manifest validator
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
-      - name: Validate the platform chart
+      - name: Validate the kafka chart
+        run: bash .github/scripts/validate-chart.sh "$KAFKA_RELEASE_NAME" helm/kafka-helm --namespace "$PLATFORM_NAMESPACE"
+      - name: Validate the logging chart (Loki, Fluentd)
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          bash .github/scripts/validate-chart.sh "$PLATFORM_RELEASE_NAME" helm/platform --namespace "$PLATFORM_NAMESPACE" \
+          bash .github/scripts/validate-chart.sh "$LOGGING_RELEASE_NAME" helm/logging-helm --namespace "$OBSERVABILITY_NAMESPACE" \
             --set-string images.fluentd="$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG"
+      - name: Validate the Grafana dashboards and ClusterIssuer charts
+        run: |
+          bash .github/scripts/validate-chart.sh "$GRAFANA_DASHBOARDS_RELEASE_NAME" helm/monitoring/grafana-dashboards \
+            --namespace "$OBSERVABILITY_NAMESPACE"
+          bash .github/scripts/validate-chart.sh cluster-issuer helm/cluster-addons/cluster-issuer --namespace cert-manager
       - name: Validate the monitoring chart with our values
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -58,12 +65,9 @@ jobs:
     permissions:
       contents: read
       packages: read
-    outputs:
-      orchestrator_image: ${{ steps.orchestrator.outputs.image }}
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
       HELM_MODE: diff
-      GHCR_REPOSITORY: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -79,31 +83,19 @@ jobs:
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           echo "FLUENTD_IMAGE=$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_ENV"
-      - name: "First install only: choose the orchestrator image (newest published)"
-        id: orchestrator
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if helm status "$PLATFORM_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
-            echo "Upgrade: the running orchestrator image is kept (Website Orchestrator Deployment changes it)."
-            exit 0
-          fi
-          tag="$(bash .github/scripts/newest-image-tag.sh "$WEBSITE_ORCHESTRATOR_IMAGE")"
-          [[ -n "$tag" ]] || { echo "::error::First install needs a published $WEBSITE_ORCHESTRATOR_IMAGE image: run Website Orchestrator CI first."; exit 1; }
-          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          image="$CONTAINER_REGISTRY/$owner/$WEBSITE_ORCHESTRATOR_IMAGE:$tag"
-          echo "First install of the platform: orchestrator image $image"
-          echo "ORCHESTRATOR_IMAGE=$image" >> "$GITHUB_ENV"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-      - name: "Changes: cluster add-ons (deployed vs new)"
+      - name: "One-time move: legacy platform release (what the deploy job removes)"
+        run: bash .github/scripts/remove-legacy-platform-release.sh
+      - name: "Changes: cluster add-ons and ClusterIssuer (deployed vs new)"
         run: ./scripts/deploy-cluster-addons.sh
-      - name: "Changes: platform release (deployed vs new)"
-        run: .github/scripts/helm-releases.sh platform
-      - name: "Changes: monitoring release (deployed vs new)"
+      - name: "Changes: monitoring and Grafana dashboards (deployed vs new)"
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
           helm repo update prometheus-community
           .github/scripts/helm-releases.sh monitoring
+      - name: "Changes: logging release - Loki, Fluentd (deployed vs new)"
+        run: .github/scripts/helm-releases.sh logging
+      - name: "Changes: kafka release (deployed vs new)"
+        run: .github/scripts/helm-releases.sh kafka
       - uses: actions/upload-artifact@v6
         with:
           name: helm-diff-${{ github.run_id }}
@@ -114,7 +106,7 @@ jobs:
     needs: review-changes
     if: needs.review-changes.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
     runs-on: [self-hosted, macOS, yotta-local-k8s]
-    # Manual approval: this job waits until a reviewer approves the deployment of platform add-ons, the platform chart and monitoring.
+    # Manual approval: this job waits until a reviewer approves the deployment of the cluster add-ons, monitoring, logging and Kafka.
     # Reviewers are set on the 'platform-deployment' environment (scripts/setup-deployment-approvals.sh).
     environment:
       name: platform-deployment
@@ -148,33 +140,22 @@ jobs:
           echo "FLUENTD_IMAGE=$CONTAINER_REGISTRY/$owner/$FLUENTD_IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_ENV"
       - name: Load the Fluentd image into Kind (nodes' platform only)
         run: ./scripts/load-image-into-kind.sh "$FLUENTD_IMAGE" "$KIND_CLUSTER_NAME"
-      - name: "First install only: load the reviewed orchestrator image into Kind"
-        if: needs.review-changes.outputs.orchestrator_image != ''
-        env:
-          ORCHESTRATOR_IMAGE: ${{ needs.review-changes.outputs.orchestrator_image }}
-        run: |
-          echo "ORCHESTRATOR_IMAGE=$ORCHESTRATOR_IMAGE" >> "$GITHUB_ENV"
-          ./scripts/load-image-into-kind.sh "$ORCHESTRATOR_IMAGE" "$KIND_CLUSTER_NAME"
-      - name: Deploy cluster add-ons through Helm
+      - name: "One-time move: remove the legacy platform release (Kafka data is kept)"
+        run: bash .github/scripts/remove-legacy-platform-release.sh
+      - name: Deploy cluster add-ons and the ClusterIssuer through Helm
         run: ./scripts/deploy-cluster-addons.sh
       - name: Add and update monitoring Helm repository
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
           helm repo update prometheus-community
-      - name: Upgrade platform release through Helm
-        env:
-          GHCR_REPOSITORY: ${{ github.repository }}
-          # The orchestrator keeps this token to start Website App Deployment whenever a website is
-          # requested, so it must be a long-lived token. The job's own GITHUB_TOKEN is revoked as soon
-          # as this job ends, which would make every later request fail with HTTP 401.
-          ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN }}
-        run: |
-          if [[ -z "$ORCHESTRATOR_GITHUB_TOKEN" ]]; then
-            echo "::error::Add the repository secret ORCHESTRATOR_GITHUB_TOKEN: a fine-grained token for this repository with 'Actions: Read and write' (see docs/deployment.md)."
-            exit 2
-          fi
-          .github/scripts/helm-releases.sh platform
-          bash .github/scripts/update-orchestrator-token.sh
-          kubectl rollout status daemonset/fluentd --namespace "$OBSERVABILITY_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
-      - name: Upgrade Prometheus and Grafana through Helm
+      # Monitoring first: its ServiceMonitor CRD lets the kafka release add the kafka-exporter ServiceMonitor
+      - name: Upgrade Prometheus, Grafana and the Grafana dashboards through Helm
         run: .github/scripts/helm-releases.sh monitoring
+      - name: Upgrade the logging release (Loki, Fluentd) through Helm
+        run: |
+          .github/scripts/helm-releases.sh logging
+          kubectl rollout status daemonset/fluentd --namespace "$OBSERVABILITY_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
+      - name: Upgrade the kafka release through Helm
+        run: |
+          .github/scripts/helm-releases.sh kafka
+          kubectl rollout status statefulset/"$KAFKA_SERVICE_NAME" --namespace "$PLATFORM_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"

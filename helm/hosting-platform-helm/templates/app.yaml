@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.service.name }}
+  labels: {app.kubernetes.io/name: {{ .Values.service.name }}}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels: {app.kubernetes.io/name: {{ .Values.service.name }}}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Values.service.name }}
+        myyotta.io/database-client: "true"   # allowed through the platform database's NetworkPolicy
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: {{ .Values.service.name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - {name: PORT, value: {{ .Values.api.port | quote }}}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            - name: KAFKA_TOPIC
+              value: {{ .Values.kafka.topic | quote }}
+            - {name: DB_HOST, value: {{ .Values.platformDatabase.host | quote }}}
+            - {name: DB_PORT, value: {{ .Values.platformDatabase.port | quote }}}
+            - {name: DB_NAME, value: {{ .Values.platformDatabase.name | quote }}}
+            - {name: DB_USER, value: {{ .Values.platformDatabase.user | quote }}}
+            - name: DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.platformDatabase.secretName }}, key: {{ .Values.platformDatabase.secretKey }}}}
+          ports: [{name: http, containerPort: {{ .Values.api.port }}}]
+          startupProbe:
+            httpGet: {path: {{ .Values.api.startupProbe.path }}, port: http}
+            periodSeconds: {{ .Values.api.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.api.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.api.startupProbe.failureThreshold }}
+          livenessProbe:
+            httpGet: {path: {{ .Values.api.livenessProbe.path }}, port: http}
+            initialDelaySeconds: {{ .Values.api.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.livenessProbe.periodSeconds }}
+          readinessProbe:
+            httpGet: {path: {{ .Values.api.readinessProbe.path }}, port: http}
+            initialDelaySeconds: {{ .Values.api.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.readinessProbe.periodSeconds }}
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.service.name }}
+  labels: {app.kubernetes.io/name: {{ .Values.service.name }}}
+spec:
+  selector: {app.kubernetes.io/name: {{ .Values.service.name }}}
+  ports: [{name: http, port: {{ .Values.service.port }}, targetPort: http}]

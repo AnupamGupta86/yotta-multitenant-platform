@@ -1,0 +1,46 @@
+image:
+  repository: yotta/hosting-platform
+  tag: local
+  pullPolicy: IfNotPresent
+service:
+  name: hosting-platform
+  port: 80
+  ingressPath: /
+  ingressPathType: Prefix
+# Platform database (helm/database-helm in platform-data). The password Secret is copied into this namespace
+# by scripts/copy-database-secret.sh (CD does it); the schema lives in services/database/init.
+platformDatabase:
+  host: postgresql.platform-data.svc.cluster.local
+  port: 5432
+  name: myyotta_platform
+  user: myyotta_app
+  secretName: myyotta-postgresql-secret
+  secretKey: POSTGRES_PASSWORD
+api:
+  replicas: 1   # lab minimum
+  port: 3000
+  startupProbe:
+    path: /health/live
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 60
+  livenessProbe:
+    path: /health/live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readinessProbe:
+    path: /health/ready
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+ingress:
+  enabled: true
+  className: nginx
+  host: api.myyotta.com
+  clusterIssuer: local-selfsigned
+  tlsSecretName: hosting-platform-tls
+kafka:
+  bootstrapServers: kafka.platform.svc.cluster.local:19092
+  topic: website-events

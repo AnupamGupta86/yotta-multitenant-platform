@@ -1,0 +1,93 @@
+{{- if .Values.loki.storage.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.loki.storage.claimName }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.loki.storage.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.loki.storage.size | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.loki.configMapName }}
+  namespace: {{ .Release.Namespace }}
+data:
+  config.yaml: |
+{{ toYaml .Values.loki.config | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.loki.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.loki.replicas }}
+  selector:
+    matchLabels: {app: {{ .Values.loki.name }}}
+  template:
+    metadata:
+      labels: {app: {{ .Values.loki.name }}}
+      annotations:
+        checksum/config: {{ toYaml .Values.loki.config | sha256sum }}
+    spec:
+      securityContext:
+        fsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: loki
+          image: {{ .Values.images.loki | quote }}
+          imagePullPolicy: {{ .Values.loki.imagePullPolicy }}
+          args: ["-config.file={{ .Values.loki.configFilePath }}"]
+          ports: [{name: http, containerPort: {{ .Values.loki.config.server.http_listen_port }}}]
+          readinessProbe:
+            httpGet: {path: {{ .Values.loki.readinessProbe.path }}, port: http}
+            initialDelaySeconds: {{ .Values.loki.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.loki.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.loki.readinessProbe.timeoutSeconds }}
+          livenessProbe:
+            httpGet: {path: {{ .Values.loki.livenessProbe.path }}, port: http}
+            initialDelaySeconds: {{ .Values.loki.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.loki.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.loki.livenessProbe.timeoutSeconds }}
+          resources:
+            {{- toYaml .Values.loki.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: {{ .Values.loki.configVolumeName }}, mountPath: {{ .Values.loki.configFilePath | dir | quote }}}
+            - {name: {{ .Values.loki.dataVolumeName }}, mountPath: {{ .Values.loki.dataPath | quote }}}
+            - {name: {{ .Values.loki.temporaryVolumeName }}, mountPath: /tmp}
+      volumes:
+        - name: {{ .Values.loki.configVolumeName }}
+          configMap: {name: {{ .Values.loki.configMapName }}}
+        - name: {{ .Values.loki.dataVolumeName }}
+          {{- if .Values.loki.storage.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.loki.storage.claimName }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: {{ .Values.loki.temporaryVolumeName }}
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.loki.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector: {app: {{ .Values.loki.name }}}
+  ports: [{name: http, port: {{ .Values.loki.config.server.http_listen_port }}, targetPort: http}]

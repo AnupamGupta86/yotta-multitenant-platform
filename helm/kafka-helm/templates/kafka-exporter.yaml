@@ -1,0 +1,69 @@
+{{- if .Values.kafkaExporter.enabled }}
+# Kafka metrics for Prometheus: messages per topic and consumer lag (the backlog the orchestrator
+# has not processed yet). Shown in the "Kafka and website events" row of the platform dashboard.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.kafkaExporter.name }}
+  labels: {app.kubernetes.io/name: {{ .Values.kafkaExporter.name }}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: {{ .Values.kafkaExporter.name }}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: {{ .Values.kafkaExporter.name }}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: {{ .Values.kafkaExporter.name }}
+          image: {{ .Values.images.kafkaExporter | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - {{ printf "--kafka.server=%s.%s.svc.cluster.local:%v" .Values.kafka.name .Release.Namespace .Values.kafka.ports.internal | quote }}
+            - {{ printf "--kafka.version=%s" .Values.kafkaExporter.kafkaProtocolVersion | quote }}
+            - "--topic.filter=^[^_].*"
+          ports:
+            - {name: metrics, containerPort: {{ .Values.kafkaExporter.port }}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.kafkaExporter.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.kafkaExporter.name }}
+  labels: {app.kubernetes.io/name: {{ .Values.kafkaExporter.name }}}
+spec:
+  selector: {app.kubernetes.io/name: {{ .Values.kafkaExporter.name }}}
+  ports:
+    - {name: metrics, port: {{ .Values.kafkaExporter.port }}, targetPort: metrics}
+{{- /* ServiceMonitor only once the monitoring stack (its CRD) is installed; a later kafka upgrade adds it */}}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor" }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.kafkaExporter.name }}
+  labels:
+    release: {{ .Values.kafkaExporter.serviceMonitorRelease }}
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: {{ .Values.kafkaExporter.name }}}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.kafkaExporter.scrapeInterval }}
+{{- end }}
+{{- end }}

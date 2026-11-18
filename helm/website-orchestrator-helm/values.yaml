@@ -1,0 +1,39 @@
+# Website orchestrator: consumes website-events from Kafka, starts the Website Deployment and Website Teardown
+# workflows through the GitHub API, and records deployments, events and website status in myyotta_platform.
+# Release name: website-orchestrator, namespace: platform (next to Kafka). Deployed by website_orchestrator_cd.yml.
+image: yotta/website-orchestrator:local   # CD sets the GHCR image and tag
+imagePullPolicy: IfNotPresent
+replicas: 1
+
+kafka:
+  bootstrapServers: kafka:19092           # Kafka (helm/kafka-helm) in the same namespace
+  topic: website-events
+  groupId: deployment-orchestrator
+
+github:
+  repository: ""                          # owner/repo; CD sets it
+  ref: master
+  workflow: website_cd.yml
+  teardownWorkflow: website_teardown.yml
+  # Fine-grained token with Actions: Read and write. Created outside Helm (update-orchestrator-token.sh),
+  # so it is never stored in Helm values or release history.
+  tokenSecretName: orchestrator-github-token
+
+# Optional notification webhook (HTTPS). Empty = notifications go to the log.
+notification:
+  secretName: notification-webhook
+  webhookUrl: ""
+
+# Platform database (helm/database-helm). Optional for the orchestrator: without the Secret it logs a warning and
+# processes events without recording them. The Secret is copied here by scripts/copy-database-secret.sh.
+platformDatabase:
+  host: postgresql.platform-data.svc.cluster.local
+  port: 5432
+  name: myyotta_platform
+  user: myyotta_app
+  secretName: myyotta-postgresql-secret
+  secretKey: POSTGRES_PASSWORD
+
+resources:
+  requests: {cpu: 25m, memory: 64Mi}
+  limits: {cpu: 250m, memory: 192Mi}

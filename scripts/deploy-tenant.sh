@@ -7,7 +7,7 @@ set -euo pipefail
 DEFAULT_ORCHESTRATOR_IMAGE="$(kubectl get deployment website-orchestrator --namespace platform \
   -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 DEFAULT_CLUSTER_NAME=yotta-platform
-TENANT_CHART=helm/website-app
+TENANT_CHART=helm/website-helm
 HEALTH_PATH=/health/ready
 LOCAL_HTTPS_PORT=8443
 LOCAL_HOST_IP=127.0.0.1
@@ -78,7 +78,6 @@ tenant_helm_args=(
   --set image.repository="$repository"
   --set image.tag="$tag"
   --set ingress.host="$domain"
-  --set database.name="$tenant"
   --set eventPublisher.enabled=true
   --set eventPublisher.image="$orchestrator_image"
   --set eventPublisher.correlationId="$correlation_id"
@@ -88,6 +87,9 @@ helm_release="$(dirname "$0")/helm-release.sh"
 if [[ "${HELM_MODE:-apply}" == diff ]]; then
   exec "$helm_release" "$release" "$TENANT_CHART" "${tenant_helm_args[@]}"
 fi
+
+# The website reads the platform database password from its own namespace
+"$(dirname "$0")/copy-database-secret.sh" "$namespace"
 
 if helm status "$release" --namespace "$namespace" >/dev/null 2>&1; then
   previous_revision="$(helm history "$release" --namespace "$namespace" --max 1 --output json | python3 -c 'import json,sys; print(json.load(sys.stdin)[-1]["revision"])')"

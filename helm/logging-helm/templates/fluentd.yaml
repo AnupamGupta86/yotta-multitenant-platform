@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.fluentd.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-fluentd
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-fluentd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-fluentd
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.fluentd.serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.fluentd.configMapName }}
+  namespace: {{ .Release.Namespace }}
+data:
+  fluent.conf: |
+{{ tpl (.Files.Get "files/fluent.conf") . | indent 4 }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Values.fluentd.daemonSetName }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels: {app: fluentd}
+  template:
+    metadata:
+      labels: {app: fluentd}
+      annotations:
+        checksum/config: {{ tpl (.Files.Get "files/fluent.conf") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Values.fluentd.serviceAccountName }}
+      tolerations: [{operator: Exists}]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: prepare-private-temp-directory
+          image: {{ .Values.images.fluentd | quote }}
+          command: [sh, -ec, {{ printf "mkdir -p %s && chmod 700 %s" .Values.fluentd.tmpDirectory .Values.fluentd.tmpDirectory | quote }}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: {{ .Values.fluentd.daemonSetName }}
+          image: {{ .Values.images.fluentd | quote }}
+          imagePullPolicy: {{ .Values.fluentd.imagePullPolicy }}
+          env:
+            - {name: TMPDIR, value: {{ .Values.fluentd.tmpDirectory | quote }}}
+          resources: {{- toYaml .Values.fluentd.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 0
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /fluentd/etc/fluent.conf, subPath: fluent.conf}
+            - {name: containers, mountPath: {{ .Values.fluentd.hostPaths.containers | quote }}, readOnly: true}
+            - {name: pods, mountPath: {{ .Values.fluentd.hostPaths.pods | quote }}, readOnly: true}
+            - {name: buffer, mountPath: {{ .Values.fluentd.bufferDirectory | quote }}}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: {{ .Values.fluentd.configMapName }}}
+        - name: containers
+          hostPath: {path: {{ .Values.fluentd.hostPaths.containers | quote }}}
+        - name: pods
+          hostPath: {path: {{ .Values.fluentd.hostPaths.pods | quote }}}
+        - name: buffer
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

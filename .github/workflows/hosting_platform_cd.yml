@@ -1,0 +1,134 @@
+# CI retrigger marker: 2026-11-16 19:30 IST end-to-end check.
+name: Hosting Platform Deployment
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Published hosting-platform image tag to deploy
+        type: string
+        required: true
+permissions:
+  contents: read
+  packages: read
+jobs:
+  validate-chart:
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: ubuntu-latest
+    # Lint, render and schema-check (kubeconform) the chart with this run's values before anything is reviewed or approved.
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ steps.pipeline.outputs.helm_version }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Validate the hosting-platform chart
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          bash .github/scripts/validate-chart.sh "$HOSTING_PLATFORM_IMAGE" helm/hosting-platform-helm --namespace "$PLATFORM_NAMESPACE" \
+            --set-string image.repository="$CONTAINER_REGISTRY/$owner/$HOSTING_PLATFORM_IMAGE" --set-string image.tag="$IMAGE_TAG"
+  review-changes:
+    needs: validate-chart
+    if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # No approval: compares the deployed release with this change (helm diff), so the reviewer reads
+    # the diff in this job's log or the run summary before approving the deploy job.
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      HELM_MODE: diff
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Validate the selected image tag
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
+      - name: Confirm the local Kind cluster is running
+        run: kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+      - name: Choose the image
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$HOSTING_PLATFORM_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: "One-time move: legacy website-provisioning release (removed by the deploy job)"
+        run: |
+          if helm status website-provisioning --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
+            echo "::warning::The deploy job uninstalls the legacy 'website-provisioning' release (renamed to hosting-platform; same API host)."
+          else
+            echo "No legacy website-provisioning release."
+          fi
+      - name: "Changes: hosting-platform release (deployed vs new)"
+        run: .github/scripts/helm-releases.sh hosting-platform
+      - uses: actions/upload-artifact@v6
+        with:
+          name: helm-diff-${{ github.run_id }}
+          path: ${{ runner.temp }}/helm-diff/
+          if-no-files-found: warn
+          retention-days: 14
+  deploy:
+    needs: review-changes
+    if: needs.review-changes.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # Manual approval: this job waits until a reviewer approves the deployment of the website provisioning service.
+    # Reviewers are set on the 'hosting-platform-deployment' environment (scripts/setup-deployment-approvals.sh).
+    environment:
+      name: hosting-platform-deployment
+    timeout-minutes: 30
+    concurrency:
+      group: local-platform-release
+      cancel-in-progress: false
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Validate the selected image tag
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
+      - name: Confirm the local Kind cluster and platform are ready
+        run: |
+          kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+          helm status "$KAFKA_RELEASE_NAME" --namespace "$PLATFORM_NAMESPACE" >/dev/null \
+            || { echo "::error::The kafka release is not installed yet. Run Platform Deployment first."; exit 1; }
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login "$CONTAINER_REGISTRY" --username "$GHCR_USER" --password-stdin
+      - name: Normalize image owner for GHCR
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$HOSTING_PLATFORM_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: Load the selected app image into Kind (nodes' platform only)
+        run: ./scripts/load-image-into-kind.sh "$IMAGE" "$KIND_CLUSTER_NAME"
+      - name: Give the service the platform database password (copied from platform-data)
+        run: ./scripts/copy-database-secret.sh "$PLATFORM_NAMESPACE"
+      - name: "One-time move: remove the legacy website-provisioning release (same API host as hosting-platform)"
+        run: |
+          if helm status website-provisioning --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
+            helm uninstall website-provisioning --namespace "$PLATFORM_NAMESPACE" --wait --timeout 5m
+          fi
+      - name: Install or upgrade the Day 0 release through Helm
+        run: |
+          .github/scripts/helm-releases.sh hosting-platform
+          kubectl rollout status deployment/"$HOSTING_PLATFORM_DEPLOYMENT" --namespace "$PLATFORM_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"

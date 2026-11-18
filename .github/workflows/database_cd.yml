@@ -1,0 +1,149 @@
+name: Database Deployment
+# Deploys the platform database (helm/database-helm, release myyotta-postgresql in platform-data).
+# validate-chart -> review-changes (helm diff, no approval) -> deploy (waits for approval) -> verify schema
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Published myyotta-postgresql image tag from the Database CI run summary
+        type: string
+        required: true
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: local-platform-release
+  cancel-in-progress: false
+jobs:
+  validate-chart:
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: ubuntu-latest
+    # Lint, render and schema-check (kubeconform) the chart with this run's values before anything is reviewed or approved.
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Validate the selected image tag
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ steps.pipeline.outputs.helm_version }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pipeline.outputs.go_version }}
+      - name: Install Kubernetes manifest validator
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v${{ steps.pipeline.outputs.kubeconform_version }}
+      - name: Validate the database chart
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          bash .github/scripts/validate-chart.sh "$DATABASE_RELEASE_NAME" helm/database-helm --namespace "$DATABASE_NAMESPACE" \
+            --set-string image.repository="$CONTAINER_REGISTRY/$owner/$DATABASE_IMAGE" --set-string image.tag="$IMAGE_TAG" \
+            --set-string database.name="$DATABASE_NAME" --set-string database.user="$DATABASE_USER" \
+            --set-string service.name="$DATABASE_SERVICE_NAME" --set-string secret.name="$DATABASE_SECRET"
+  review-changes:
+    needs: validate-chart
+    if: needs.validate-chart.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # No approval: compares the deployed release with this change (helm diff), so the reviewer reads
+    # the diff in this job's log or the run summary before approving the deploy job.
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      HELM_MODE: diff
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Confirm the local Kind cluster is running
+        run: kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+      - name: Choose the image
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$DATABASE_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: "Changes: myyotta-postgresql release (deployed vs new)"
+        run: .github/scripts/helm-releases.sh database
+      - uses: actions/upload-artifact@v6
+        with:
+          name: helm-diff-${{ github.run_id }}
+          path: ${{ runner.temp }}/helm-diff/
+          if-no-files-found: warn
+          retention-days: 14
+  deploy:
+    needs: review-changes
+    if: needs.review-changes.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feature' || startsWith(github.ref, 'refs/heads/feature/'))
+    runs-on: [self-hosted, macOS, yotta-local-k8s]
+    # Manual approval: this job waits until a reviewer approves the database deployment.
+    # Reviewers are set on the 'database-deployment' environment (scripts/setup-deployment-approvals.sh).
+    environment:
+      name: database-deployment
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Load shared pipeline defaults
+        id: pipeline
+        run: bash .github/scripts/load-pipeline-config.sh
+      - name: Validate the selected image tag
+        run: bash .github/scripts/validate-image-tag.sh "$IMAGE_TAG"
+      - name: Confirm the local Kind cluster is running
+        run: kind get clusters | grep -qx "$KIND_CLUSTER_NAME"
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login "$CONTAINER_REGISTRY" --username "$GHCR_USER" --password-stdin
+      - name: Choose the image
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=$CONTAINER_REGISTRY/$owner/$DATABASE_IMAGE:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: Load the database image into Kind (nodes' platform only)
+        run: ./scripts/load-image-into-kind.sh "$IMAGE" "$KIND_CLUSTER_NAME"
+      - name: Install or upgrade the database through Helm
+        run: |
+          .github/scripts/helm-releases.sh database
+          kubectl rollout status statefulset/"$DATABASE_RELEASE_NAME" --namespace "$DATABASE_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
+      - name: Verify the schema in the deployed database
+        run: |
+          pod="$DATABASE_RELEASE_NAME-0"
+          # Same test as CI; it runs in one transaction that is rolled back, so no data is left behind
+          kubectl exec -i --namespace "$DATABASE_NAMESPACE" "$pod" -- \
+            psql -v ON_ERROR_STOP=1 -U "$DATABASE_USER" -d "$DATABASE_NAME" < services/database/test/schema_test.sql
+          {
+            echo '### Database deployed'
+            echo "Service: \`$DATABASE_SERVICE_NAME.$DATABASE_NAMESPACE.svc.cluster.local:5432\`, database \`$DATABASE_NAME\`, user \`$DATABASE_USER\`, password in Secret \`$DATABASE_SECRET\`"
+            echo '```'
+            kubectl exec --namespace "$DATABASE_NAMESPACE" "$pod" -- psql -U "$DATABASE_USER" -d "$DATABASE_NAME" -c '\dt'
+            kubectl get statefulset,pod,svc,pvc,networkpolicy --namespace "$DATABASE_NAMESPACE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Make the database available to the platform services
+        run: |
+          # Provisioning API and orchestrator read the password from their own namespace
+          ./scripts/copy-database-secret.sh "$PLATFORM_NAMESPACE"
+          # The orchestrator starts without the database when the Secret is missing: restart it to connect now
+          if kubectl get deployment "$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
+            kubectl rollout restart deployment/"$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --namespace "$PLATFORM_NAMESPACE"
+            kubectl rollout status deployment/"$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --namespace "$PLATFORM_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
+          fi
+      - name: Show database diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods,pvc,events --namespace "$DATABASE_NAMESPACE" || true
+          kubectl logs --namespace "$DATABASE_NAMESPACE" "$DATABASE_RELEASE_NAME-0" --tail=80 || true
