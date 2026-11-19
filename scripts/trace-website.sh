@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # Follow website requests through the platform.
-# Usage: ./scripts/trace-website.sh <tenant>            one website, every hop, one snapshot:
-#                                                       API record -> Kafka events -> orchestrator -> GitHub Actions run
+# Usage: ./scripts/trace-website.sh <tenant>            one website, every hop, refreshed every 5 s until Ctrl+C:
+#                                                       API record -> Kafka events -> orchestrator -> e-mail -> GitHub Actions run
 #                                                       -> Kubernetes (Helm, pods) -> HTTPS
-#        ./scripts/trace-website.sh <tenant> --watch    the same, refreshed every 5 s until Ctrl+C (use it during a demo)
-#        ./scripts/trace-website.sh --all               every website: its latest Kafka event as one status line
-#        ./scripts/trace-website.sh --all --watch       the same, redrawn on every new event
+#        ./scripts/trace-website.sh --all               every website: its latest Kafka event as one status line,
+#                                                       redrawn on every new event until Ctrl+C
+#        add --once to print one snapshot and exit (--watch is accepted and is the default)
 # Needs kubectl and curl; gh (logged in) for the Actions hop. API_URL defaults to https://api.myyotta.com:8443.
 set -uo pipefail
 
-tenant="${1:?usage: trace-website.sh <tenant>|--all [--watch]}"
-watch=false
-[ "${2:-}" = "--watch" ] && watch=true
+tenant="${1:?usage: trace-website.sh <tenant>|--all [--once]}"
+watch=true
+case "${2:-}" in
+  --once) watch=false ;;
+  ""|--watch) ;;
+  *) echo "unknown option '$2' (use --once for a single snapshot)" >&2; exit 2 ;;
+esac
 NAMESPACE="${PLATFORM_NAMESPACE:-platform}"
 TOPIC="${KAFKA_TOPIC:-website-events}"
 
@@ -81,7 +85,7 @@ bad() { printf '  \033[31m%s\033[0m\n' "$1"; }
 
 snapshot() {
   printf '\033[1mRequest path for %s\033[0m   (%s)\n' "$tenant" "$(date '+%H:%M:%S')"
-  echo "  POST /api/v1/websites -> 202 -> Kafka -> orchestrator -> Website Deployment (approve) -> namespace $tenant"
+  echo "  POST /api/v1/websites -> 202 -> Kafka -> orchestrator (+ e-mail) -> Website Deployment (approve) -> namespace $tenant"
 
   # 1. API: the website record in the platform database
   hop "1. Hosting Platform API (record in myyotta_platform)"
@@ -128,14 +132,44 @@ for line in sys.stdin:
   hop "3. Website orchestrator (last actions)"
   pattern="tenant=$tenant( |$)"
   [ -n "$event_ids" ] && pattern="$pattern|$event_ids"
-  logs="$(kubectl logs -n "$NAMESPACE" deploy/website-orchestrator --since=24h 2>/dev/null \
+  all_logs="$(kubectl logs -n "$NAMESPACE" deploy/website-orchestrator --since=24h 2>/dev/null)"
+  logs="$(printf '%s\n' "$all_logs" \
     | grep -E "$pattern" | grep -E "WEBSITE_EVENT|Started|E-mail|NOTIFICATION|Notification|failed|Error" | tail -n 8)"
-  if [ -n "$logs" ]; then printf '%s\n' "$logs" | cut -c1-170 | sed 's/^/  /'; else wait_ "no orchestrator log lines for $tenant in the last 24 h"; fi
+  if [ -n "$logs" ]; then printf '%s\n' "$logs" | cut -c1-170 | sed 's/^/  /'
+  else
+    started="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=website-orchestrator \
+      -o jsonpath='{.items[0].status.startTime}' 2>/dev/null)"
+    wait_ "no orchestrator log lines for $tenant since the pod started (${started:-unknown}); older lines went with the previous pod"
+  fi
 
-  # 4. GitHub Actions: the deployment / teardown runs for this tenant. Runs named "<workflow> · <tenant>" match
+  # 4. E-mail: the orchestrator sends one notification per event once it has processed it, and logs
+  # "E-mail sent for event_id=<id> to <recipients>" or "E-mail for event_id=<id> to <recipients> failed: <reason>"
+  hop "4. E-mail notifications"
+  smtp_secret="${ORCHESTRATOR_SMTP_SECRET:-orchestrator-smtp}"
+  if ! kubectl get secret "$smtp_secret" -n "$NAMESPACE" >/dev/null 2>&1; then
+    bad "e-mail is off: no Secret $smtp_secret in $NAMESPACE (repository secrets SMTP_USERNAME, SMTP_PASSWORD, NOTIFY_EMAIL_TO, then Website Orchestrator Deployment)"
+  elif [ -z "$events" ]; then
+    wait_ "no events for $tenant yet, so nothing to e-mail"
+  else
+    printf '%s\n' "$events" | while read -r _when event_type event_id; do
+      [ -n "$event_id" ] || continue
+      line="$(printf '%s\n' "$all_logs" | grep -F "event_id=$event_id" | grep -F "E-mail" | tail -n 1)"
+      case "$line" in
+        *"E-mail sent"*) ok "$(printf '%-30s sent to %s' "$event_type" "${line##* to }")" ;;
+        *" failed: "*) bad "$(printf '%-30s FAILED: %s' "$event_type" "${line#* failed: }" | cut -c1-160)" ;;
+        *) if printf '%s\n' "$all_logs" | grep -qF "event_id=$event_id"; then
+             wait_ "$(printf '%-30s processed without e-mail (e-mail was off then)' "$event_type")"
+           else
+             wait_ "$(printf '%-30s not in the current orchestrator pod log (earlier pod, or not processed yet)' "$event_type")"
+           fi ;;
+      esac
+    done
+  fi
+
+  # 5. GitHub Actions: the deployment / teardown runs for this tenant. Runs named "<workflow> · <tenant>" match
   # directly; older runs (named only "Website Deployment") are matched by time: the orchestrator starts the
   # workflow within seconds of the request event, so a run created up to 3 minutes after it belongs to it.
-  hop "4. GitHub Actions"
+  hop "5. GitHub Actions"
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     runs="$( { gh run list --workflow website_cd.yml --limit 100 --json displayTitle,status,conclusion,createdAt,url 2>/dev/null \
                | sed 's/^/D /'; echo; \
@@ -171,14 +205,15 @@ for line in sys.stdin:
 for _, text in sorted(found, reverse=True)[:5]:
     print(text)')"
     if [ -n "$runs" ]; then printf '%s\n' "$runs" | sed 's/^/  /'
-      case "$runs" in *": waiting "*|*": queued "*) wait_ "-> waiting: open the run and approve it ('Review deployments')" ;; esac
+      case "$runs" in *": waiting "*) wait_ "-> waiting for approval: open the run and click 'Review deployments'" ;; esac
+      case "$runs" in *": queued "*) bad "-> queued: no self-hosted runner picked it up. Start it: cd ~/actions-runner && ./run.sh" ;; esac
     else wait_ "no Website Deployment / Teardown run for $tenant (deployed by a script, e.g. setup-local-e2e.sh, or older than the 100 newest runs)"; fi
   else
     wait_ "gh not installed or not logged in: skip (gh auth login)"
   fi
 
-  # 5. Kubernetes: the tenant's own release and pods
-  hop "5. Kubernetes namespace $tenant"
+  # 6. Kubernetes: the tenant's own release and pods
+  hop "6. Kubernetes namespace $tenant"
   if kubectl get namespace "$tenant" >/dev/null 2>&1; then
     helm_line="$(helm list -n "$tenant" --filter "^$tenant\$" 2>/dev/null | tail -n +2)"
     if [ -n "$helm_line" ]; then ok "helm: $(printf '%s' "$helm_line" | awk '{print "revision " $3 ", " $8 ", chart " $9}')"; else wait_ "helm release not installed yet"; fi
@@ -187,13 +222,20 @@ for _, text in sorted(found, reverse=True)[:5]:
     wait_ "namespace $tenant does not exist (not deployed yet, or torn down)"
   fi
 
-  # 6. HTTPS through the Ingress
-  hop "6. HTTPS https://$domain:$HTTPS_PORT/health/ready"
+  # 7. HTTPS through the Ingress
+  hop "7. HTTPS https://$domain:$HTTPS_PORT/health/ready"
   code="$(curl -ks -o /dev/null -w '%{http_code}' --max-time 5 --resolve "$domain:$HTTPS_PORT:127.0.0.1" "https://$domain:$HTTPS_PORT/health/ready" 2>/dev/null)"
-  case "$code" in 200) ok "200 ready" ;; 000) wait_ "no answer yet" ;; *) bad "HTTP $code" ;; esac
+  case "$code" in
+    200) ok "200 ready" ;;
+    000) wait_ "no answer (ingress not reachable, or the name is missing from /etc/hosts)" ;;
+    404) wait_ "404 from ingress-nginx: no Ingress for this host (website not deployed, or torn down)" ;;
+    503) bad "503: the Ingress exists but no pod is ready" ;;
+    *) bad "HTTP $code" ;;
+  esac
 }
 
 if [ "$watch" = true ]; then
+  trap 'printf "\nStopped.\n"; exit 0' INT TERM
   while true; do
     out="$(snapshot 2>&1)"
     printf '\033[H\033[2J%s\n\n(refreshes every 5 s, Ctrl+C to stop)\n' "$out"
