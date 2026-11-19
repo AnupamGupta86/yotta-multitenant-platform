@@ -27,7 +27,9 @@ case "${1:?usage: helm-releases.sh <kafka|logging|monitoring|orchestrator|hostin
     "$release_cmd" "$GRAFANA_DASHBOARDS_RELEASE_NAME" helm/monitoring/grafana-dashboards \
       --namespace "$OBSERVABILITY_NAMESPACE" --reset-then-reuse-values --wait --timeout "$SERVICE_HELM_TIMEOUT"
     ;;
-  orchestrator)  # needs IMAGE (website-orchestrator), GHCR_REPOSITORY; optional SMTP_HOST, SMTP_PORT
+  orchestrator)  # needs IMAGE (website-orchestrator), GHCR_REPOSITORY; optional SMTP_HOST, SMTP_PORT, NOTIFICATION_WEBHOOK_URL
+    webhook_args=()
+    [[ -n "${NOTIFICATION_WEBHOOK_URL:-}" ]] && webhook_args=(--set-string notification.webhookUrl="$NOTIFICATION_WEBHOOK_URL")
     "$release_cmd" "$WEBSITE_ORCHESTRATOR_RELEASE_NAME" helm/website-orchestrator-helm \
       --namespace "$PLATFORM_NAMESPACE" --create-namespace --reset-then-reuse-values \
       --set-string image="$IMAGE" \
@@ -35,6 +37,7 @@ case "${1:?usage: helm-releases.sh <kafka|logging|monitoring|orchestrator|hostin
       --set-string email.smtpHost="${SMTP_HOST:-smtp.gmail.com}" \
       --set email.smtpPort="${SMTP_PORT:-587}" \
       --set-string email.existingSecret="$ORCHESTRATOR_SMTP_SECRET" \
+      ${webhook_args[@]+"${webhook_args[@]}"} \
       --wait --timeout "$SERVICE_HELM_TIMEOUT"
     ;;
   hosting-platform)  # needs IMAGE (hosting-platform)

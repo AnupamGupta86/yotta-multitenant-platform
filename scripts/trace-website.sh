@@ -1,18 +1,76 @@
 #!/usr/bin/env bash
-# Follow one website request through every hop of the platform:
-#   API record -> Kafka events -> orchestrator -> GitHub Actions run -> Kubernetes (Helm, pods) -> HTTPS
-# Usage: ./scripts/trace-website.sh <tenant>            one snapshot
-#        ./scripts/trace-website.sh <tenant> --watch    refresh every 5 s until Ctrl+C (use it during a demo)
+# Follow website requests through the platform.
+# Usage: ./scripts/trace-website.sh <tenant>            one website, every hop, one snapshot:
+#                                                       API record -> Kafka events -> orchestrator -> GitHub Actions run
+#                                                       -> Kubernetes (Helm, pods) -> HTTPS
+#        ./scripts/trace-website.sh <tenant> --watch    the same, refreshed every 5 s until Ctrl+C (use it during a demo)
+#        ./scripts/trace-website.sh --all               every website: its latest Kafka event as one status line
+#        ./scripts/trace-website.sh --all --watch       the same, redrawn on every new event
 # Needs kubectl and curl; gh (logged in) for the Actions hop. API_URL defaults to https://api.myyotta.com:8443.
 set -uo pipefail
 
-tenant="${1:?usage: trace-website.sh <tenant> [--watch]}"
+tenant="${1:?usage: trace-website.sh <tenant>|--all [--watch]}"
 watch=false
 [ "${2:-}" = "--watch" ] && watch=true
-API_URL="${API_URL:-https://api.myyotta.com:8443}"
 NAMESPACE="${PLATFORM_NAMESPACE:-platform}"
-KAFKA_POD="${KAFKA_POD:-kafka-0}"
 TOPIC="${KAFKA_TOPIC:-website-events}"
+
+# ---- --all: one status line per website, read from the Kafka topic (Kafka tools inside the broker pod)
+if [ "$tenant" = "--all" ]; then
+  POD="${KAFKA_POD:-kafka-0}"
+  BOOTSTRAP=localhost:19092
+  READ_TIMEOUT_MS=5000
+consume_args="--bootstrap-server $BOOTSTRAP --topic $TOPIC --from-beginning"
+[ "$watch" = true ] || consume_args="$consume_args --timeout-ms $READ_TIMEOUT_MS"
+
+# shellcheck disable=SC2086 # consume_args is deliberately split into words
+kubectl exec -i -n "$NAMESPACE" "$POD" -- /opt/kafka/bin/kafka-console-consumer.sh $consume_args 2>/dev/null \
+| WATCH="$watch" python3 -u -c '
+import datetime, json, os, select, sys
+
+STATUS = {"WebsiteProvisioningRequested": "REQUESTED", "WebsiteCreated": "LIVE",
+          "WebsiteDeploymentFailed": "FAILED", "WebsiteDeletionRequested": "DELETING",
+          "WebsiteDeleted": "DELETED"}
+COLOUR = {"REQUESTED": "\033[33m", "LIVE": "\033[32m", "FAILED": "\033[31m", "DELETING": "\033[35m",
+          "DELETED": "\033[90m"}
+watch = os.environ.get("WATCH") == "true" and sys.stdout.isatty()
+latest, count = {}, {}
+
+def table():
+    if watch:
+        sys.stdout.write("\033[H\033[2J")   # clear the screen
+        print("Kafka topic website-events, updated %s (Ctrl+C to stop)\n" % datetime.datetime.now().strftime("%H:%M:%S"))
+    print("%-10s %-10s %-28s %-7s %s" % ("TENANT", "STATUS", "DOMAIN", "EVENTS", "LAST EVENT"))
+    for tenant, e in sorted(latest.items()):
+        status = STATUS.get(e.get("event_type"), e.get("event_type") or "?")
+        when = e.get("occurred_at") or e.get("requested_at") or ""
+        line = "%-10s %-10s %-28s %-7s %s" % (tenant, status, e.get("domain", ""), count[tenant], when)
+        print(COLOUR.get(status, "") + line + "\033[0m" if watch else line)
+    if not latest:
+        print("(no events yet)")
+    sys.stdout.flush()
+
+while True:
+    line = sys.stdin.readline()   # one line at a time, so new events show immediately
+    if not line:
+        break
+    try:
+        event = json.loads(line)
+    except ValueError:
+        continue
+    tenant = event.get("tenant", "?")
+    latest[tenant] = event
+    count[tenant] = count.get(tenant, 0) + 1
+    # Redraw once the backlog read at start-up is done, then on every new event
+    if watch and not select.select([sys.stdin], [], [], 0.2)[0]:
+        table()
+
+table()
+'
+  exit 0
+fi
+API_URL="${API_URL:-https://api.myyotta.com:8443}"
+KAFKA_POD="${KAFKA_POD:-kafka-0}"
 HTTPS_PORT="${HTTPS_PORT:-8443}"
 case "$tenant" in *[!a-z0-9-]*) echo "tenant must be a DNS label (a-z, 0-9, -)" >&2; exit 2 ;; esac
 

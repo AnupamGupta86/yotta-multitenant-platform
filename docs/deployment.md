@@ -68,12 +68,11 @@ curl -k https://user4.myyotta.com:8443/health/ready
 
 Successful deployments publish `WebsiteCreated`. If Helm rollout, the HTTPS health check, or the Helm test fails, the deployment script rolls back and GitHub Actions publishes `WebsiteDeploymentFailed`. The website orchestrator writes a readable notification to its logs and optionally posts to `NOTIFICATION_WEBHOOK_URL`. The deployment workflow uploads Kubernetes resource and event logs as a 14-day artifact.
 
-For direct deployment of the three sample tenants, use:
+To deploy one tenant directly, without the API (the sample tenants user1–user3 are deployed this way by
+`setup-local-e2e.sh`):
 
 ```sh
-IMAGE=ghcr.io/<owner>/website:<tag> \
-ORCHESTRATOR_IMAGE=ghcr.io/<owner>/website-orchestrator:<tag> \
-PULL_IMAGE=true ./scripts/deploy-sample-tenants.sh
+PULL_IMAGE=true ./scripts/deploy-tenant.sh user1 user1.myyotta.com ghcr.io/<owner>/website:<tag>
 ```
 
 The workflow's manual dispatch can deploy one DNS-safe tenant name or all three sample tenants. A custom domain applies to one tenant at a time.

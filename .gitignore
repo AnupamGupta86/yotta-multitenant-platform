@@ -15,3 +15,6 @@ gh-runner/
 
 # Files moved aside for deletion (delete the folder yourself)
 _to_delete/
+
+# One-off local cleanup tool (deletes GitHub Actions runs); kept out of the repository
+scripts/delete-github-runs.sh

@@ -96,7 +96,6 @@ yotta-multitenant-platform/
 │   ├── setup-local-e2e.sh        One command: fresh Kind cluster + everything + user1-3
 │   ├── setup-kind.sh             Create/update the cluster, add-ons, monitoring, platform
 │   ├── deploy-cluster-addons.sh  Calico, ingress-nginx (namespace infrastructure), cert-manager, metrics-server (versions in cluster-addons.env)
-│   ├── deploy-sample-tenants.sh  Deploy the website chart for the sample tenants user1-user3
 │   ├── deploy-tenant.sh          Deploy one tenant: Helm, HTTPS check, Helm test, automatic rollback
 │   ├── load-image-into-kind.sh   Load only the node's platform of a multi-platform image into Kind
 │   ├── build-version.sh          Image tag 1.0.0-YYYYMMDDHHMMSS
@@ -104,8 +103,8 @@ yotta-multitenant-platform/
 │   ├── check-docker.sh           Setup: Docker engine reachable (starts Colima, sizes it, fixes context, inotify)
 │   ├── check-routes.sh           Every Ingress host answers 200, no duplicate hosts, no pod on an old image
 │   ├── copy-database-secret.sh   Copies the platform database password into a service's namespace
-│   ├── kafka-events.sh           Website status per tenant from Kafka events (--watch: live)
-│   ├── trace-website.sh          One request through every hop: API, Kafka, orchestrator, Actions run, namespace, HTTPS
+│   ├── trace-website.sh          One website through every hop (API, Kafka, orchestrator, Actions run, namespace, HTTPS);
+│   │                             --all: every website's status from Kafka; --watch: live
 │   ├── generate-dashboard.py     Writes the Grafana dashboard JSON (helm/monitoring/grafana-dashboards/files/)
 │   ├── helm-release.sh           HELM_MODE=apply: helm upgrade --install; HELM_MODE=diff: coloured diff for review
 │   ├── load-test.py              CPU load generator for the HPA demo
@@ -481,7 +480,7 @@ gh run list --workflow website_cd.yml --limit 3
 | Change the e-mail login or recipients | `gh secret set SMTP_USERNAME` / `SMTP_PASSWORD` / `NOTIFY_EMAIL_TO`, then re-run `aiops_pod_doctor_cd.yml` and `website_orchestrator_cd.yml` |
 | Add a reviewer | `./scripts/setup-deployment-approvals.sh <login> [<login>...]` |
 | See what is deployed | `helm list -A`; `kubectl get deploy -A -o wide` |
-| Status of every website from Kafka (live) | `./scripts/kafka-events.sh --watch` |
+| Status of every website from Kafka (live) | `./scripts/trace-website.sh --all --watch` |
 | Follow one request end to end (live) | `./scripts/trace-website.sh user4 --watch` |
 | Check every route and find stale pods | `./scripts/check-routes.sh` (also runs at the end of `setup-local-e2e.sh`) |
 | Collect proof of work | `./scripts/collect-proof.sh` ([proof-of-work.md](proof-of-work.md)) |
