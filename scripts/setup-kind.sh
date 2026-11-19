@@ -16,8 +16,9 @@ PROMETHEUS_REPOSITORY_URL=https://prometheus-community.github.io/helm-charts
 # A new tag per setup run: re-using one fixed tag (":local") leaves pods started earlier on the old image,
 # because an unchanged Deployment spec triggers no rollout. setup-local-e2e.sh passes its own tag in.
 LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-local-$(date -u +%Y%m%d%H%M%S)}"
-WEBSITE_ORCHESTRATOR_IMAGE="yotta/website-orchestrator:$LOCAL_IMAGE_TAG"
-FLUENTD_IMAGE="yotta/fluentd-loki:$LOCAL_IMAGE_TAG"
+# LOCAL_* names: .github/pipeline-config.env (loaded below) has its own WEBSITE_ORCHESTRATOR_IMAGE (the GHCR image name)
+LOCAL_ORCHESTRATOR_IMAGE="yotta/website-orchestrator:$LOCAL_IMAGE_TAG"
+LOCAL_FLUENTD_IMAGE="yotta/fluentd-loki:$LOCAL_IMAGE_TAG"
 FLUENTD_DOCKERFILE=helm/logging-helm/image/Dockerfile
 FLUENTD_BUILD_CONTEXT=helm/logging-helm/image
 WEBSITE_ORCHESTRATOR_BUILD_CONTEXT=services/website-orchestrator
@@ -63,14 +64,14 @@ helm_retry helm repo update "$PROMETHEUS_REPOSITORY"
 # Monitoring first: its ServiceMonitor CRD lets the kafka release add the kafka-exporter ServiceMonitor
 "$HELM_RELEASES" monitoring          # prometheus (kube-prometheus-stack) + grafana-dashboards
 
-docker build -t "$FLUENTD_IMAGE" -f "$FLUENTD_DOCKERFILE" "$FLUENTD_BUILD_CONTEXT"
-kind load docker-image "$FLUENTD_IMAGE" --name "$cluster_name"
-docker build -t "$WEBSITE_ORCHESTRATOR_IMAGE" "$WEBSITE_ORCHESTRATOR_BUILD_CONTEXT"
-kind load docker-image "$WEBSITE_ORCHESTRATOR_IMAGE" --name "$cluster_name"
+docker build -t "$LOCAL_FLUENTD_IMAGE" -f "$FLUENTD_DOCKERFILE" "$FLUENTD_BUILD_CONTEXT"
+kind load docker-image "$LOCAL_FLUENTD_IMAGE" --name "$cluster_name"
+docker build -t "$LOCAL_ORCHESTRATOR_IMAGE" "$WEBSITE_ORCHESTRATOR_BUILD_CONTEXT"
+kind load docker-image "$LOCAL_ORCHESTRATOR_IMAGE" --name "$cluster_name"
 
-FLUENTD_IMAGE="$FLUENTD_IMAGE" "$HELM_RELEASES" logging            # Loki + Fluentd (observability)
+FLUENTD_IMAGE="$LOCAL_FLUENTD_IMAGE" "$HELM_RELEASES" logging            # Loki + Fluentd (observability)
 "$HELM_RELEASES" kafka                                            # Kafka + kafka-exporter (platform)
-IMAGE="$WEBSITE_ORCHESTRATOR_IMAGE" GHCR_REPOSITORY="$ORCHESTRATOR_REPOSITORY" \
+IMAGE="$LOCAL_ORCHESTRATOR_IMAGE" GHCR_REPOSITORY="$ORCHESTRATOR_REPOSITORY" \
   NOTIFICATION_WEBHOOK_URL="$NOTIFICATION_WEBHOOK_URL" "$HELM_RELEASES" orchestrator
 printf '%s' "$ORCHESTRATOR_GITHUB_TOKEN" \
   | kubectl create secret generic "$ORCHESTRATOR_TOKEN_SECRET" \

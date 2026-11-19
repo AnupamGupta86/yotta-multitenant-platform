@@ -126,20 +126,20 @@ echo "Checking chart definitions..."
 helm lint "$PROVISIONING_CHART"
 helm lint "$WEBSITE_CHART"
 
-#if kind get clusters | grep -qx "$CLUSTER_NAME"; then
-#  echo "WARNING: deleting Kind cluster $CLUSTER_NAME permanently removes its workloads and stored demo data."
-#  if [[ ! -t 0 ]]; then
-#    echo "Refusing to delete a cluster without an interactive confirmation. Run this script in a terminal and type: $CLUSTER_DELETE_CONFIRMATION" >&2
-#    exit 2
-#  fi
-#  read -r -p "Type '$CLUSTER_DELETE_CONFIRMATION' to continue: " typed_confirmation
-#  if [[ "$typed_confirmation" != "$CLUSTER_DELETE_CONFIRMATION" ]]; then
-#    echo "Confirmation did not match; leaving cluster $CLUSTER_NAME untouched." >&2
-#    exit 2
-#  fi
-#  echo "Deleting confirmed Kind cluster $CLUSTER_NAME..."
-#  kind delete cluster --name "$CLUSTER_NAME"
-#fi
+if kind get clusters | grep -qx "$CLUSTER_NAME"; then
+  echo "WARNING: deleting Kind cluster $CLUSTER_NAME permanently removes its workloads and stored demo data."
+  if [[ ! -t 0 ]]; then
+    echo "Refusing to delete a cluster without an interactive confirmation. Run this script in a terminal and type: $CLUSTER_DELETE_CONFIRMATION" >&2
+    exit 2
+  fi
+  read -r -p "Type '$CLUSTER_DELETE_CONFIRMATION' to continue: " typed_confirmation
+  if [[ "$typed_confirmation" != "$CLUSTER_DELETE_CONFIRMATION" ]]; then
+    echo "Confirmation did not match; leaving cluster $CLUSTER_NAME untouched." >&2
+    exit 2
+  fi
+  echo "Deleting confirmed Kind cluster $CLUSTER_NAME..."
+  kind delete cluster --name "$CLUSTER_NAME"
+fi
 
 echo "Creating a fresh Kind cluster and installing add-ons, monitoring, and platform..."
 CLUSTER_NAME="$CLUSTER_NAME" "$SETUP_KIND_SCRIPT"
