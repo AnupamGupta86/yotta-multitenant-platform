@@ -4,11 +4,11 @@
 #
 #   environment                       used by
 #   platform-deployment               platform_cd.yml               (add-ons, kafka, logging, monitoring)
-#   website-orchestrator-deployment   website_orchestrator_cd.yml
+#   website-orchestrator-deployment   website_orchestrator_cd.yml   (holds ORCHESTRATOR_GITHUB_TOKEN)
 #   hosting-platform-deployment       hosting_platform_cd.yml
 #   website-deployment                website_cd.yml                (one run per tenant website)
 #                                     website_teardown.yml          (deletes a tenant website)
-#   aiops-deployment                  aiops_pod_doctor_cd.yml       (also holds GROK_API_KEY and the SMTP_* / REPORT_EMAIL_TO secrets)
+#   aiops-deployment                  aiops_pod_doctor_cd.yml       (holds GROK_API_KEY)
 #   database-deployment               database_cd.yml               (platform database myyotta-postgresql)
 #
 # Deployments are only allowed from master, feature and feature/* (the same branches the CD jobs accept).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recreate the local Kind cluster and install the platform, Provisioning API, and assignment tenants user1-user3; pass [tenant] [domain] to install one custom tenant.
+# Recreate the local Kind cluster and install the platform, Hosting Platform API, and assignment tenants user1-user3; pass [tenant] [domain] to install one custom tenant.
 set -euo pipefail
 
 # Configuration defaults. Override image/host defaults with environment variables,
@@ -126,20 +126,20 @@ echo "Checking chart definitions..."
 helm lint "$PROVISIONING_CHART"
 helm lint "$WEBSITE_CHART"
 
-if kind get clusters | grep -qx "$CLUSTER_NAME"; then
-  echo "WARNING: deleting Kind cluster $CLUSTER_NAME permanently removes its workloads and stored demo data."
-  if [[ ! -t 0 ]]; then
-    echo "Refusing to delete a cluster without an interactive confirmation. Run this script in a terminal and type: $CLUSTER_DELETE_CONFIRMATION" >&2
-    exit 2
-  fi
-  read -r -p "Type '$CLUSTER_DELETE_CONFIRMATION' to continue: " typed_confirmation
-  if [[ "$typed_confirmation" != "$CLUSTER_DELETE_CONFIRMATION" ]]; then
-    echo "Confirmation did not match; leaving cluster $CLUSTER_NAME untouched." >&2
-    exit 2
-  fi
-  echo "Deleting confirmed Kind cluster $CLUSTER_NAME..."
-  kind delete cluster --name "$CLUSTER_NAME"
-fi
+#if kind get clusters | grep -qx "$CLUSTER_NAME"; then
+#  echo "WARNING: deleting Kind cluster $CLUSTER_NAME permanently removes its workloads and stored demo data."
+#  if [[ ! -t 0 ]]; then
+#    echo "Refusing to delete a cluster without an interactive confirmation. Run this script in a terminal and type: $CLUSTER_DELETE_CONFIRMATION" >&2
+#    exit 2
+#  fi
+#  read -r -p "Type '$CLUSTER_DELETE_CONFIRMATION' to continue: " typed_confirmation
+#  if [[ "$typed_confirmation" != "$CLUSTER_DELETE_CONFIRMATION" ]]; then
+#    echo "Confirmation did not match; leaving cluster $CLUSTER_NAME untouched." >&2
+#    exit 2
+#  fi
+#  echo "Deleting confirmed Kind cluster $CLUSTER_NAME..."
+#  kind delete cluster --name "$CLUSTER_NAME"
+#fi
 
 echo "Creating a fresh Kind cluster and installing add-ons, monitoring, and platform..."
 CLUSTER_NAME="$CLUSTER_NAME" "$SETUP_KIND_SCRIPT"
@@ -152,11 +152,11 @@ helm upgrade --install "$DATABASE_RELEASE" "$DATABASE_CHART" \
   --set-string "image.repository=${DATABASE_IMAGE%:*}" \
   --set-string "image.tag=${DATABASE_IMAGE##*:}" \
   --wait --timeout "$DATABASE_TIMEOUT"
-# Provisioning API and orchestrator (namespace platform) read the password from their own namespace
+# Hosting Platform API and orchestrator (namespace platform) read the password from their own namespace
 "$script_dir/copy-database-secret.sh" "$PLATFORM_NAMESPACE"
 kubectl rollout restart deployment/website-orchestrator --namespace "$PLATFORM_NAMESPACE"
 
-echo "Building and loading the local Provisioning API image..."
+echo "Building and loading the local Hosting Platform API image..."
 docker build -t "$PROVISIONING_IMAGE" "$PROVISIONING_BUILD_CONTEXT"
 kind load docker-image "$PROVISIONING_IMAGE" --name "$CLUSTER_NAME"
 
@@ -184,7 +184,7 @@ done
 
 echo
 echo "End-to-end local setup is ready."
-echo "Provisioning API: https://${PROVISIONING_HOST}:${LOCAL_HTTPS_PORT}/api/v1  (new website: POST /api/v1/websites)"
+echo "Hosting Platform API: https://${PROVISIONING_HOST}:${LOCAL_HTTPS_PORT}/api/v1  (new website: POST /api/v1/websites)"
 echo "Tenant websites:"
 for domain in "${DOMAINS_TO_DEPLOY[@]}"; do
   echo "  https://${domain}:${LOCAL_HTTPS_PORT}/api/v1"

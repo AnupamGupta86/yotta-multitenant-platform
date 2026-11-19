@@ -27,11 +27,14 @@ case "${1:?usage: helm-releases.sh <kafka|logging|monitoring|orchestrator|hostin
     "$release_cmd" "$GRAFANA_DASHBOARDS_RELEASE_NAME" helm/monitoring/grafana-dashboards \
       --namespace "$OBSERVABILITY_NAMESPACE" --reset-then-reuse-values --wait --timeout "$SERVICE_HELM_TIMEOUT"
     ;;
-  orchestrator)  # needs IMAGE (website-orchestrator), GHCR_REPOSITORY
+  orchestrator)  # needs IMAGE (website-orchestrator), GHCR_REPOSITORY; optional SMTP_HOST, SMTP_PORT
     "$release_cmd" "$WEBSITE_ORCHESTRATOR_RELEASE_NAME" helm/website-orchestrator-helm \
       --namespace "$PLATFORM_NAMESPACE" --create-namespace --reset-then-reuse-values \
       --set-string image="$IMAGE" \
       --set-string github.repository="$GHCR_REPOSITORY" \
+      --set-string email.smtpHost="${SMTP_HOST:-smtp.gmail.com}" \
+      --set email.smtpPort="${SMTP_PORT:-587}" \
+      --set-string email.existingSecret="$ORCHESTRATOR_SMTP_SECRET" \
       --wait --timeout "$SERVICE_HELM_TIMEOUT"
     ;;
   hosting-platform)  # needs IMAGE (hosting-platform)

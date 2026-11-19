@@ -45,7 +45,7 @@ resources:
 
 networkPolicy:
   enabled: true
-  # Pods in any namespace that carry this label may connect on 5432 (the provisioning API, the orchestrator
+  # Pods in any namespace that carry this label may connect on 5432 (the hosting-platform API, the orchestrator
   # and every tenant website set it); other pods are blocked. The database's own namespace is always allowed.
   clientPodLabel:
     myyotta.io/database-client: "true"

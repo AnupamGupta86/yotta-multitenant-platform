@@ -8,7 +8,7 @@ For a complete local Kind setup, run this from the repository root:
 ./scripts/setup-local-e2e.sh
 ```
 
-The utility creates a fresh `yotta-platform` Kind cluster, installs cluster add-ons, monitoring, and the platform, then builds and deploys the local Provisioning API and all three assignment tenants: `user1`, `user2`, and `user3` at their matching `*.myyotta.com` domains. If that cluster already exists, the script warns that its workloads and demo data will be deleted and requires you to type `delete yotta-platform`; a non-interactive run refuses to delete it. The script derives `ORCHESTRATOR_REPOSITORY` from the `origin` Git remote and takes `ORCHESTRATOR_GITHUB_TOKEN` from the environment, otherwise from your GitHub CLI login (`gh auth token`), otherwise it asks for it. Use a fine-grained token with Actions read/write access. To install a single tenant instead, pass its name and optional domain, for example `./scripts/setup-local-e2e.sh user4 user4.example.com`.
+The utility creates a fresh `yotta-platform` Kind cluster, installs cluster add-ons, monitoring, and the platform, then builds and deploys the local Hosting Platform API and all three assignment tenants: `user1`, `user2`, and `user3` at their matching `*.myyotta.com` domains. If that cluster already exists, the script warns that its workloads and demo data will be deleted and requires you to type `delete yotta-platform`; a non-interactive run refuses to delete it. The script derives `ORCHESTRATOR_REPOSITORY` from the `origin` Git remote and takes `ORCHESTRATOR_GITHUB_TOKEN` from the environment, otherwise from your GitHub CLI login (`gh auth token`), otherwise it asks for it. Use a fine-grained token with Actions read/write access. To install a single tenant instead, pass its name and optional domain, for example `./scripts/setup-local-e2e.sh user4 user4.example.com`.
 
 The utility does not edit `/etc/hosts`; add the line it prints after setup if the hostnames do not resolve locally. It also does not register a GitHub Actions runner. The existing manual setup and GitHub Actions deployment steps follow below for teams using published images or remote deployments.
 
@@ -24,13 +24,13 @@ export ORCHESTRATOR_GITHUB_TOKEN=your-fine-grained-token
 ./scripts/setup-kind.sh
 ```
 
-The setup script installs the cluster add-ons (including the `cluster-issuer` chart), monitoring with the `grafana-dashboards` chart, the `logging` and `kafka` charts, and the website orchestrator through Helm. It intentionally does not install the Provisioning API.
+The setup script installs the cluster add-ons (including the `cluster-issuer` chart), monitoring with the `grafana-dashboards` chart, the `logging` and `kafka` charts, and the website orchestrator through Helm. It intentionally does not install the Hosting Platform API.
 
-## 2. Install the Day 0 Provisioning API
+## 2. Install the Day 0 Hosting Platform API
 
 From GitHub Actions, run **Hosting Platform Deployment** on `master` and provide the published `image_tag`. The workflow validates the chart, then pulls the selected image and installs or upgrades the `hosting-platform` Helm release in the `platform` namespace on the self-hosted Mac runner. Changes to the service run CI and publish an image; deployment remains manual.
 
-The provisioning release owns a separate PostgreSQL StatefulSet, persistent volume, and random password Secret. If your Kind cluster has no default storage class, set one in the chart values before installing it.
+The `hosting-platform` release has no database of its own: it uses the common platform database `myyotta_platform` (**Database Deployment**, release `myyotta-postgresql` in `platform-data`), so deploy the database first. The workflow copies the database password Secret into `platform` before it installs the API.
 
 ## 3. Submit a request
 
@@ -95,10 +95,10 @@ Every deployment pipeline waits for a person to approve it before it changes any
 | Pipeline | Environment |
 |---|---|
 | Platform Deployment (`platform_cd.yml`) | `platform-deployment` |
-| Website Orchestrator Deployment (`website_orchestrator_cd.yml`) | `website-orchestrator-deployment` |
+| Website Orchestrator Deployment (`website_orchestrator_cd.yml`) | `website-orchestrator-deployment` (holds `ORCHESTRATOR_GITHUB_TOKEN`) |
 | Hosting Platform Deployment (`hosting_platform_cd.yml`) | `hosting-platform-deployment` |
 | Website Deployment (`website_cd.yml`, one run per tenant) | `website-deployment` |
-| AIOps Pod Doctor Deployment (`aiops_pod_doctor_cd.yml`) | `aiops-deployment` (also holds `GROK_API_KEY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `REPORT_EMAIL_TO`) |
+| AIOps Pod Doctor Deployment (`aiops_pod_doctor_cd.yml`) | `aiops-deployment` (holds `GROK_API_KEY`; e-mail uses the repository secrets `SMTP_USERNAME`, `SMTP_PASSWORD`, `NOTIFY_EMAIL_TO`) |
 
 Set them up once with `scripts/setup-deployment-approvals.sh` (needs the GitHub CLI, logged in with admin rights). It creates the five environments, makes you the required reviewer, and only allows deployments from `master`, `feature` and `feature/*`, the same branches the CD jobs accept. To add more reviewers: `scripts/setup-deployment-approvals.sh alice bob`.
 
@@ -121,6 +121,6 @@ To demonstrate a rollback, run Website Deployment with `simulate_failure=true`; 
 
 ## Local development
 
-Docker Compose runs local PostgreSQL, Kafka, the FastAPI services, and the website orchestrator. Forward or call the provisioning API on `http://127.0.0.1:3001`. The orchestrator defaults to dry-run mode so local requests do not start real GitHub workflows. To exercise dispatch from Compose, set `ORCHESTRATOR_DRY_RUN=false`, `ORCHESTRATOR_REPOSITORY`, and `ORCHESTRATOR_GITHUB_TOKEN`.
+Docker Compose runs local PostgreSQL, Kafka, the FastAPI services, and the website orchestrator. Forward or call the hosting-platform API on `http://127.0.0.1:3001`. The orchestrator defaults to dry-run mode so local requests do not start real GitHub workflows. To exercise dispatch from Compose, set `ORCHESTRATOR_DRY_RUN=false`, `ORCHESTRATOR_REPOSITORY`, and `ORCHESTRATOR_GITHUB_TOKEN`.
 
 For actual Kubernetes deployment, use Helm releases. The platform, Day 0 API, and every tenant deployment have separate charts/releases. The setup and deployment scripts use `kubectl` only for readiness checks, port forwarding, logs, and inspection.

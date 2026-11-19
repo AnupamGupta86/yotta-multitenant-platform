@@ -60,6 +60,21 @@ prometheus:
     resources:
       requests: {cpu: 100m, memory: 256Mi}
       limits: {cpu: "1", memory: 1Gi}
+  # ingress-nginx request metrics (every HTTP service behind the Ingress, by status): 4XX / 5XX per service.
+  # honorLabels keeps the metric's own namespace label (the Ingress's namespace), so the dashboard's
+  # Namespace filter works; without it Prometheus would rename it to exported_namespace.
+  additionalServiceMonitors:
+    - name: ingress-nginx
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+      namespaceSelector:
+        matchNames: [infrastructure]
+      endpoints:
+        - port: metrics
+          interval: 30s
+          honorLabels: true
 alertmanager:
   ingress:
     enabled: true

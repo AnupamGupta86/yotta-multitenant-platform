@@ -3,7 +3,7 @@
 
 Edit the panels here, then run from the repository root:  python3 scripts/generate-dashboard.py
 Filters: Namespace and Service (container). Rows: overview, pods and health, CPU, memory, network,
-website traffic, Kafka and website events, databases, logs.
+website traffic, HTTP errors per service, Kafka and website events, the platform database, logs.
 """
 import json
 
@@ -134,8 +134,37 @@ ts("Successful responses (%)", [(f'100 * sum by (tenant) (rate(yotta_http_reques
 ts("HTTP request rate by endpoint", [(f'sum by (tenant, endpoint) (rate(yotta_http_requests_total{{{TEN}}}[5m]))', "{{tenant}} {{endpoint}}")], unit="reqps", x=12)
 y += 8
 
+# ---------------- HTTP errors per service (measured at ingress-nginx: websites, hosting-platform API, UIs)
+ING = 'nginx_ingress_controller_requests{namespace=~"$namespace"'
+BY = "sum by (namespace, service)"
+ING_DESC = ("From ingress-nginx: every request that comes in through the Ingress (tenant websites, the hosting-platform "
+            "API, Grafana/Prometheus). Lines are namespace/service. Filtered by Namespace only.")
+row("HTTP errors per service (4XX / 5XX, at the ingress)")
+stat("4XX responses in time range", f'round(sum(increase({ING}, status=~"4.."}}[$__range])))', x=0, w=6,
+     thresholds=bad_if_above(100, 1), desc="Client errors: 400 bad request, 404 not found, 409 conflict, 422 invalid input...")
+stat("5XX responses in time range", f'round(sum(increase({ING}, status=~"5.."}}[$__range])))', x=6, w=6,
+     thresholds=bad_if_above(1), desc="Server errors: 500, 502 bad gateway (pod down), 503 unavailable, 504 timeout.")
+stat("4XX rate (% of requests)", f'100 * sum(rate({ING}, status=~"4.."}}[5m])) / sum(rate({ING}}}[5m]))', unit="percent",
+     x=12, w=6, thresholds=bad_if_above(20, 5), desc=ING_DESC)
+stat("5XX rate (% of requests)", f'100 * sum(rate({ING}, status=~"5.."}}[5m])) / sum(rate({ING}}}[5m]))', unit="percent",
+     x=18, w=6, thresholds=bad_if_above(5, 1), desc=ING_DESC)
+y += 4
+ts("4XX responses per minute by service", [(f'60 * {BY} (rate({ING}, status=~"4.."}}[5m]))', "{{namespace}}/{{service}}")],
+   x=0, desc=ING_DESC)
+ts("5XX responses per minute by service", [(f'60 * {BY} (rate({ING}, status=~"5.."}}[5m]))', "{{namespace}}/{{service}}")],
+   x=12, desc=ING_DESC)
+y += 8
+ts("4XX and 5XX by service and status code",
+   [(f'60 * sum by (namespace, service, status) (rate({ING}, status=~"[45].."}}[5m]))', "{{namespace}}/{{service}} {{status}}")],
+   x=0, desc="Per minute. " + ING_DESC)
+ts("Error rate by service (%)",
+   [(f'100 * {BY} (rate({ING}, status=~"4.."}}[5m])) / {BY} (rate({ING}}}[5m]))', "{{namespace}}/{{service}} 4XX"),
+    (f'100 * {BY} (rate({ING}, status=~"5.."}}[5m])) / {BY} (rate({ING}}}[5m]))', "{{namespace}}/{{service}} 5XX")],
+   unit="percent", x=12, desc="Share of each service's requests that failed. " + ING_DESC)
+y += 8
+
 # ---------------- Kafka and website events
-ORCH = '{namespace="platform", container="website-orchestrator"} |= "WEBSITE_EVENT" | json | line_format "{{.log}}" | regexp `event_type=(?P<event_type>\S+) tenant=(?P<tenant>\S+) domain=(?P<domain>\S+)`'
+ORCH = r'{namespace="platform", container="website-orchestrator"} |= "WEBSITE_EVENT" | json | line_format "{{.log}}" | regexp `event_type=(?P<event_type>\S+) tenant=(?P<tenant>\S+) domain=(?P<domain>\S+)`'
 row("Kafka and website events")
 stat("Kafka brokers up", 'sum(kafka_brokers)', x=0, thresholds=[{"color": "red", "value": None}, {"color": "green", "value": 1}],
      desc="From kafka-exporter. 0 = Kafka down or exporter cannot reach it.")
@@ -146,12 +175,12 @@ stat("Unprocessed events (orchestrator lag)", 'sum(kafka_consumergroup_lag{topic
 for i, (label, etype, colour) in enumerate([("Requested", "WebsiteProvisioningRequested", "blue"),
                                              ("Created (live)", "WebsiteCreated", "green"),
                                              ("Deployment failed", "WebsiteDeploymentFailed", "red")]):
-    panels.append({"id": nid(), "title": "%s in time range" % label, "type": "stat", "datasource": LOKI,
+    panels.append({"id": nid(), "title": f"{label} in time range", "type": "stat", "datasource": LOKI,
                    "gridPos": {"h": 4, "w": 4, "x": 12 + 4 * i, "y": y},
                    "fieldConfig": {"defaults": {"unit": "short", "noValue": "0", "color": {"mode": "fixed", "fixedColor": colour}}, "overrides": []},
                    "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}, "colorMode": "value", "graphMode": "none"},
                    "targets": [{"refId": "A", "datasource": LOKI, "queryType": "instant",
-                                "expr": 'sum(count_over_time(%s | event_type="%s" [$__range]))' % (ORCH, etype)}]})
+                                "expr": f'sum(count_over_time({ORCH} | event_type="{etype}" [$__range]))'}]})
 y += 4
 ts("Kafka messages per minute by topic", [('60 * sum by (topic) (rate(kafka_topic_partition_current_offset{topic!~"__.*"}[5m]))', "{{topic}}")], x=0)
 ts("Consumer lag (queue backlog)", [('sum by (consumergroup, topic) (kafka_consumergroup_lag)', "{{consumergroup}} / {{topic}}")], x=12,
@@ -166,7 +195,7 @@ for x, title, by, flt in [(0, "Website events by type", "event_type", ""), (12, 
                        {"matcher": {"id": "byRegexp", "options": ".*Requested.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]}]},
                    "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True}, "tooltip": {"mode": "multi"}},
                    "targets": [{"refId": "A", "datasource": LOKI, "legendFormat": "{{tenant}} {{event_type}}" if "tenant" in by else "{{event_type}}",
-                                "expr": 'sum by (%s) (count_over_time(%s%s [$__interval]))' % (by, ORCH, flt)}]})
+                                "expr": f"sum by ({by}) (count_over_time({ORCH}{flt} [$__interval]))"}]})
 y += 8
 panels.append({"id": nid(), "title": "Website event log (newest first)", "type": "logs", "datasource": LOKI,
                "gridPos": {"h": 8, "w": 24, "x": 0, "y": y},
@@ -175,8 +204,8 @@ panels.append({"id": nid(), "title": "Website event log (newest first)", "type":
                             "expr": '{namespace="platform", container="website-orchestrator"} |= "WEBSITE_EVENT" | json | line_format "{{.log}}"'}]})
 y += 8
 
-# ---------------- Databases and Kafka
-row("Databases")
+# ---------------- Platform database
+row("Platform database")
 ts("Ready PostgreSQL replicas", [(f'sum by (namespace, statefulset) (kube_statefulset_status_replicas_ready{{{NS}, statefulset=~".*postgres.*"}})', "{{namespace}} / {{statefulset}}")], x=0)
 ts("PostgreSQL volume usage", [(f'sum by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes{{{NS}}})', "{{namespace}} / {{persistentvolumeclaim}}")],
    unit="bytes", x=12, desc="Empty if the storage driver does not report volume stats (Kind local-path).")
@@ -214,10 +243,11 @@ templating = {"list": [
 dashboard = {
     "title": "Yotta Website Platform", "uid": "yotta-websites", "schemaVersion": 39, "version": 4,
     "description": "Filter by Namespace (platform, aiops, observability, user1, user2...) and Service (container). "
-                   "Overview -> pods -> CPU -> memory -> network -> website traffic -> Kafka and website events -> databases -> logs.",
+                   "Overview -> pods -> CPU -> memory -> network -> website traffic -> HTTP errors per service -> Kafka and website events -> platform database -> logs.",
     "refresh": "15s", "time": {"from": "now-30m", "to": "now"}, "tags": ["website-platform", "debugging"],
     "timezone": "browser", "editable": True, "graphTooltip": 1,
     "templating": templating, "panels": panels,
 }
-json.dump(dashboard, open("helm/monitoring/grafana-dashboards/files/website-dashboard.json", "w"), indent=2)
+with open("helm/monitoring/grafana-dashboards/files/website-dashboard.json", "w") as output:
+    json.dump(dashboard, output, indent=2)
 print(len(panels), "panels; last y =", y)

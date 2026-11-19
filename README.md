@@ -1,7 +1,7 @@
 # Yotta multi-tenant website platform
 
 A platform that gives every customer (tenant) an isolated website on Kubernetes: its own namespace,
-Flask app, private PostgreSQL, HTTPS host, autoscaling and quotas. A website is requested through an API,
+Flask app, HTTPS host, autoscaling, quotas and network isolation; all data lives in one platform PostgreSQL database. A website is requested through an API,
 the request travels through Kafka, and GitHub Actions deploys it with Helm onto a local Kind cluster.
 
 ## Deliverables at a glance
@@ -34,7 +34,7 @@ flowchart LR
     CD --> Runner[Self-hosted Mac runner]
     Runner --> Helm[Helm releases on Kind]
 
-    User[POST tenant + domain] --> API[Provisioning API - FastAPI]
+    User[POST tenant + domain] --> API[Hosting Platform API - FastAPI]
     API --> DB[(Provisioning PostgreSQL)]
     API --> Kafka[(Kafka: website-events)]
     Kafka --> Orch[Website orchestrator]
@@ -49,7 +49,7 @@ flowchart LR
 | Component | Namespace | Chart / code |
 |---|---|---|
 | Tenant website (data in the platform database) | `<tenant>` | `helm/website-helm`, `services/website` |
-| Provisioning API (users, website requests) | `platform` | `helm/hosting-platform-helm`, `services/hosting-platform` |
+| Hosting Platform API (users, website requests) | `platform` | `helm/hosting-platform-helm`, `services/hosting-platform` |
 | Website orchestrator (Kafka consumer, starts deployments and teardowns) | `platform` | `helm/website-orchestrator-helm`, `services/website-orchestrator` |
 | Kafka, kafka-exporter | `platform` | `helm/kafka-helm` |
 | Loki, Fluentd (logs) | `observability` | `helm/logging-helm` |
@@ -57,7 +57,7 @@ flowchart LR
 | Prometheus, Grafana | `observability` | `helm/monitoring` (kube-prometheus-stack values) |
 | Ingress-NGINX, cert-manager, Calico, metrics-server (upstream charts) + ClusterIssuer | cluster | `helm/cluster-addons` (calico-crds, cluster-issuer), `scripts/deploy-cluster-addons.sh` |
 | AIOps pod doctor | `aiops` | `aiops-pod-doctor/` |
-| Platform database `myyotta_platform` (PostgreSQL 16: users, websites, domains, deployments, configs, events) | `platform-data` | `helm/database-helm` (release `myyotta-postgresql`, Service `postgresql`), `services/database` ([details](services/database/README.md)) |
+| Platform database `myyotta_platform` (PostgreSQL 16: users, websites, domains, deployments, configs, events) | `platform-data` | `helm/database-helm` (release `myyotta-postgresql`, Service `postgresql`), `services/database` ([design and tables](services/database/README.md#database-design)) |
 
 ## Repository layout
 
@@ -83,7 +83,7 @@ With Colima: `brew install colima docker kind kubectl helm`. The setup scripts s
 to the `colima` context, and raise the VM's inotify limits that a two-node Kind cluster needs.
 
 ```sh
-./scripts/setup-local-e2e.sh          # Kind cluster, add-ons, monitoring, platform, provisioning API, user1-3
+./scripts/setup-local-e2e.sh          # Kind cluster, add-ons, monitoring, platform, hosting-platform API, user1-3
 ```
 
 Then add the hosts entry it prints:
@@ -97,8 +97,9 @@ Then add the hosts entry it prints:
 One-time setup:
 
 1. Register the Mac as a self-hosted runner with label `yotta-local-k8s` ([docs/local-runner.md](docs/local-runner.md)).
-2. Add the repository secret `ORCHESTRATOR_GITHUB_TOKEN`: a fine-grained token with **Actions: Read and write**,
-   used by the orchestrator to start deployments (`gh secret set ORCHESTRATOR_GITHUB_TOKEN`).
+2. Add the secret `ORCHESTRATOR_GITHUB_TOKEN` to the `website-orchestrator-deployment` environment: a fine-grained token
+   with **Actions: Read and write**, used by the orchestrator to start deployments
+   (`gh secret set ORCHESTRATOR_GITHUB_TOKEN --env website-orchestrator-deployment`).
 3. Create the approval environments: `./scripts/setup-deployment-approvals.sh`.
 
 Deploy, in this order, each with the image tag shown on its CI run summary (approve each run):
@@ -121,6 +122,7 @@ curl -k -i -X POST https://api.myyotta.com:8443/api/v1/websites \
 curl -k https://api.myyotta.com:8443/api/v1/users                          # all registered users
 curl -k https://api.myyotta.com:8443/api/v1/websites                       # all websites and their status
 curl -k -i -X DELETE 'https://api.myyotta.com:8443/api/v1/websites?tenant=user4'   # teardown (approve it)
+./scripts/trace-website.sh user4 --watch   # follow it: API -> Kafka -> orchestrator -> Actions run -> namespace -> HTTPS
 ```
 
 | Endpoint | Does |
@@ -130,6 +132,8 @@ curl -k -i -X DELETE 'https://api.myyotta.com:8443/api/v1/websites?tenant=user4'
 | `POST /api/v1/websites` | `tenant`, `domain`, owner `email` → website, domain, config and request event in `myyotta_platform`, then `WebsiteProvisioningRequested` on Kafka; repeating it is safe |
 | `GET /api/v1/websites` | all websites (or `?email=` one user's) with status and last deployment |
 | `DELETE /api/v1/websites?tenant=` | marks it `DELETING`, publishes `WebsiteDeletionRequested` → *Website Teardown* (approval) → `WebsiteDeleted` → record removed |
+
+Every event on the `website-events` topic, whether the API, Website Deployment or Website Teardown published it, is e-mailed by the website orchestrator once it has processed it (subject e.g. `[myyotta] Website ready: user4`). Turn it on with the repository secrets `SMTP_USERNAME`, `SMTP_PASSWORD` and `NOTIFY_EMAIL_TO`, which AIOps reports share ([runbook](docs/github-actions-runbook.md), steps 6b–6c).
 | `GET /api/v1/health` | database and Kafka status (200 / 503) |
 | `GET /health/ready`, `GET /health/live` | Kubernetes readiness (database) and liveness |
 
@@ -162,7 +166,7 @@ Manual options (redeploy an older tag, `helm rollback`): [docs/rollback.md](docs
 
 | Event | Sent by | When |
 |---|---|---|
-| `WebsiteProvisioningRequested` | Provisioning API | a website request was accepted and stored |
+| `WebsiteProvisioningRequested` | Hosting Platform API | a website request was accepted and stored |
 | `WebsiteCreated` | Helm test job in the tenant release | the new website passed its checks |
 | `WebsiteDeploymentFailed` | Website Deployment workflow | rollout or health check failed and was rolled back |
 
@@ -176,9 +180,10 @@ for outcomes (optionally also to `NOTIFICATION_WEBHOOK_URL`). Events share a `co
   `observability`, `user1`, `user2`...) and **Service** (container: `website`, `postgres`, `kafka`...). Rows:
   overview (running/not ready/waiting containers, restarts, CPU and memory use), pods and health (ready pods, restarts,
   why a container is not running), CPU (usage, % of limit, throttling, HPA replicas), memory (working set, % of limit),
-  network, website traffic (rate by tenant/status/endpoint, success %), **Kafka and website events** (brokers up,
+  network, website traffic (rate by tenant/status/endpoint, success %), **HTTP errors per service** (4XX and 5XX
+  counts, per-minute rates and % by service and status code, measured at ingress-nginx), **Kafka and website events** (brokers up,
   messages per topic, orchestrator consumer lag, events requested/created/failed by type and tenant, event log),
-  databases, and Loki logs with error counts. Kafka metrics come from `kafka-exporter` (kafka chart);
+  the platform database, and Loki logs with error counts. Kafka metrics come from `kafka-exporter` (kafka chart);
   edit the dashboard in `scripts/generate-dashboard.py`.
   Grafana https://grafana.myyotta.com:8443 (user `admin`), Prometheus https://prometheus.myyotta.com:8443 and
   Alertmanager https://alertmanager.myyotta.com:8443, through the same ingress as the websites (no extra ports).

@@ -1,5 +1,6 @@
 # CI retrigger marker: 2026-11-18 21:42 IST end-to-end check.
 name: Website Deployment
+run-name: Website Deployment · ${{ inputs.tenant }}
 on:
   workflow_dispatch:
     inputs:

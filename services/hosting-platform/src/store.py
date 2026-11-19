@@ -1,4 +1,4 @@
-"""All reads and writes of the Provisioning API against the platform database (myyotta_platform)."""
+"""All reads and writes of the Hosting Platform API against the platform database (myyotta_platform)."""
 
 import logging
 import os

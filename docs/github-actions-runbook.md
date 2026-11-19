@@ -21,7 +21,7 @@ what it needs, how to run it, and how to fix the usual failures.
 yotta-multitenant-platform/
 ├── README.md                     Project overview, deliverables map, quick start
 ├── VERSION                       Base image version (1.0.0); CI appends the UTC build time
-├── docker-compose.yml            Local dev: PostgreSQL, Kafka, provisioning API, orchestrator (dry-run)
+├── docker-compose.yml            Local dev: PostgreSQL, Kafka, hosting-platform API, orchestrator (dry-run)
 ├── .trivyignore                  Documented image-scan exceptions (one false positive)
 ├── .gitignore                    Ignored local files (venv, output/, runner files, .DS_Store)
 │
@@ -34,14 +34,14 @@ yotta-multitenant-platform/
 │   │   ├── resolve-website-images.sh   Website CD: requested or newest app image, running orchestrator image
 │   │   ├── helm-releases.sh            The Helm options of each CD release, used by review-changes and deploy
 │   │   ├── check-teardown-target.sh    Teardown guard: only tenant website namespaces, never platform/system ones
-│   │   ├── provisioning-e2e.sh         CI: Provisioning API against the real database image + Kafka, every endpoint
+│   │   ├── provisioning-e2e.sh         CI: Hosting Platform API against the real database image + Kafka, every endpoint
 │   │   ├── validate-chart.sh           CD validate-chart: helm lint + template + kubeconform
 │   │   ├── newest-image-tag.sh         Newest published version tag of a GHCR image
 │   │   └── update-orchestrator-token.sh Refreshes the orchestrator's GitHub token Secret in the cluster
 │   └── workflows/
 │       ├── reusable-service-ci.yml  Reusable CI: lint, tests, security scans, image build/scan/run, publish
 │       ├── website_ci.yml / _cd.yml            Tenant website: build / deploy one tenant (+ rollback demo)
-│       ├── hosting_platform_ci.yml / _cd.yml   Provisioning API: build / deploy
+│       ├── hosting_platform_ci.yml / _cd.yml   Hosting Platform API: build / deploy
 │       ├── website_orchestrator_ci.yml / _cd.yml   Kafka orchestrator: build + Kafka test / deploy
 │       ├── platform_ci.yml / platform_cd.yml       Charts + Fluentd image / add-ons, platform, monitoring
 │       ├── aiops_pod_doctor_ci.yml / _cd.yml       AIOps doctor: build / deploy the CronJob + one report run
@@ -51,12 +51,12 @@ yotta-multitenant-platform/
 ├── services/                     Application code (one folder = one container image)
 │   ├── website/              Tenant website (Flask + gunicorn)
 │   │   ├── src/app.py            Routes: /health/live, /health/ready, /api/v1, /api/v1/workload, /metrics
-│   │   ├── src/server.py         Tenant database check + WSGI entry point (src.server:app)
+│   │   ├── src/server.py         Platform database readiness check + WSGI entry point (src.server:app)
 │   │   ├── gunicorn.conf.py      Web server settings; waits for the database before serving
 │   │   ├── test/                 Unit tests (Flask test client)
 │   │   ├── Dockerfile            Non-root image with health check
 │   │   └── requirements.txt      flask, gunicorn, psycopg
-│   ├── hosting-platform/     Provisioning API (FastAPI)
+│   ├── hosting-platform/     Hosting Platform API (FastAPI)
 │   │   ├── src/app.py            users/register, websites POST/GET/DELETE, /api/v1/health, /health/ready|live
 │   │   ├── src/store.py          All SQL against myyotta_platform (users, websites, domains, configs, events)
 │   │   ├── src/security.py       Salted scrypt password hashing
@@ -105,6 +105,7 @@ yotta-multitenant-platform/
 │   ├── check-routes.sh           Every Ingress host answers 200, no duplicate hosts, no pod on an old image
 │   ├── copy-database-secret.sh   Copies the platform database password into a service's namespace
 │   ├── kafka-events.sh           Website status per tenant from Kafka events (--watch: live)
+│   ├── trace-website.sh          One request through every hop: API, Kafka, orchestrator, Actions run, namespace, HTTPS
 │   ├── generate-dashboard.py     Writes the Grafana dashboard JSON (helm/monitoring/grafana-dashboards/files/)
 │   ├── helm-release.sh           HELM_MODE=apply: helm upgrade --install; HELM_MODE=diff: coloured diff for review
 │   ├── load-test.py              CPU load generator for the HPA demo
@@ -145,7 +146,7 @@ flowchart LR
       AICD[AIOps Pod Doctor Deployment]
     end
     GHCR -->|image_tag| PCD & OCD & WPCD & ACD & AICD
-    API[Provisioning API] -->|WebsiteProvisioningRequested| Kafka[(Kafka)] --> Orch[Orchestrator] -->|workflow dispatch| ACD
+    API[Hosting Platform API] -->|WebsiteProvisioningRequested| Kafka[(Kafka)] --> Orch[Orchestrator] -->|workflow dispatch| ACD
     ACD -->|WebsiteCreated / WebsiteDeploymentFailed| Kafka
 ```
 
@@ -153,7 +154,7 @@ flowchart LR
 |---|---|---|---|
 | Platform: add-ons, Kafka, Loki, Fluentd, monitoring | `platform_ci.yml` (Fluentd image) | `platform_cd.yml` | `platform-deployment` |
 | Website orchestrator (Kafka consumer) | `website_orchestrator_ci.yml` | `website_orchestrator_cd.yml` | `website-orchestrator-deployment` |
-| Provisioning API (FastAPI) | `hosting_platform_ci.yml` | `hosting_platform_cd.yml` | `hosting-platform-deployment` |
+| Hosting Platform API (FastAPI) | `hosting_platform_ci.yml` | `hosting_platform_cd.yml` | `hosting-platform-deployment` |
 | Tenant website (Flask) | `website_ci.yml` | `website_cd.yml` | `website-deployment` |
 | AIOps pod doctor | `aiops_pod_doctor_ci.yml` | `aiops_pod_doctor_cd.yml` | `aiops-deployment` |
 | Platform database (`myyotta-postgresql`) | `database_ci.yml` | `database_cd.yml` | `database-deployment` |
@@ -177,10 +178,11 @@ flowchart LR
 | 1 | Tools on the Mac | Docker engine (Colima: `brew install colima docker`, or Docker Desktop), Kind, kubectl, Helm 4.x, Python 3.9+ (`python3`), GitHub CLI `gh` |
 | 2 | Kind cluster | `./scripts/setup-kind.sh` (or `./scripts/setup-local-e2e.sh` for everything) |
 | 3 | Self-hosted runner | Settings → Actions → Runners → *New self-hosted runner* (macOS), label **`yotta-local-k8s`**; keep `./run.sh` running. Details: [local-runner.md](local-runner.md) |
-| 4 | Repository secret `ORCHESTRATOR_GITHUB_TOKEN` | Fine-grained PAT for this repo with **Actions: Read and write**: `gh secret set ORCHESTRATOR_GITHUB_TOKEN` |
+| 4 | Secret `ORCHESTRATOR_GITHUB_TOKEN` on environment `website-orchestrator-deployment` | Fine-grained PAT for this repo with **Actions: Read and write**: `gh secret set ORCHESTRATOR_GITHUB_TOKEN --env website-orchestrator-deployment`; only the orchestrator deploy job can read it |
 | 5 | Approval environments | `./scripts/setup-deployment-approvals.sh` (creates all six, you as reviewer, deploys only from `master`, `feature`, `feature/*`) |
 | 6 | Grok key (AIOps only) | `gh secret set GROK_API_KEY --env aiops-deployment`; optional `gh variable set GROK_MODEL --env aiops-deployment --body grok-4` |
-| 6b | E-mail reports (AIOps only) | `gh secret set SMTP_USERNAME`, `SMTP_PASSWORD`, `REPORT_EMAIL_TO` with `--env aiops-deployment`; optional variables `SMTP_HOST` (default `smtp.gmail.com`), `SMTP_PORT` (default `587`). See [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md#e-mail-setup-one-time) |
+| 6b | E-mail settings, shared by AIOps reports and website-event e-mails | **Repository** secrets `gh secret set SMTP_USERNAME`, `SMTP_PASSWORD` (Gmail app password), `NOTIFY_EMAIL_TO` (comma-separated); optional variables `SMTP_HOST` (default `smtp.gmail.com`), `SMTP_PORT` (default `587`). See [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md#e-mail-setup-one-time) |
+| 6c | Turn on website-event e-mails | Run Website Orchestrator Deployment after 6b; it copies the e-mail settings into the cluster |
 | 7 | Local names | `127.0.0.1 api.myyotta.com user1.myyotta.com user2.myyotta.com user3.myyotta.com grafana.myyotta.com prometheus.myyotta.com alertmanager.myyotta.com` in `/etc/hosts` |
 
 Check the runner is online: `gh api repos/{owner}/{repo}/actions/runners --jq '.runners[] | [.name,.status,(.labels|map(.name)|join(","))] | @tsv'`
@@ -338,7 +340,10 @@ gh workflow run platform_cd.yml --ref master -f image_tag=<tag>
 
 Needs: the `kafka` release and `ORCHESTRATOR_GITHUB_TOKEN` (stored in the Secret `orchestrator-github-token`
 so the orchestrator can start Website Deployment and Website Teardown). Installs or upgrades its own release
-`website-orchestrator` from `helm/website-orchestrator-helm` in namespace `platform`.
+`website-orchestrator` from `helm/website-orchestrator-helm` in namespace `platform`. Optional secrets on
+`website-orchestrator-deployment`: `SMTP_USERNAME`, `SMTP_PASSWORD`, `NOTIFY_EMAIL_TO` (variables `SMTP_HOST`,
+`SMTP_PORT`); with them the orchestrator e-mails one notification per Kafka website event (requested, created,
+failed, deletion requested, deleted). Without them the run warns and e-mail stays off.
 
 ```sh
 gh workflow run website_orchestrator_cd.yml --ref master -f image_tag=<tag>
@@ -386,8 +391,8 @@ gh workflow run website_cd.yml --ref master -f tenant=user1 -f domain=user1.myyo
 |---|---|---|
 | `image_tag` | yes | tag from AIOps Pod Doctor CI |
 
-Needs, on environment `aiops-deployment`: secrets `GROK_API_KEY`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
-`REPORT_EMAIL_TO` (the run **fails** if any is missing); optional variables `GROK_MODEL`, `SMTP_HOST`, `SMTP_PORT`.
+Needs, on environment `aiops-deployment`: secret `GROK_API_KEY`; plus `SMTP_USERNAME`, `SMTP_PASSWORD`,
+`NOTIFY_EMAIL_TO` as repository secrets (the run **fails** if any is missing); optional variables `GROK_MODEL`, `SMTP_HOST`, `SMTP_PORT`.
 Steps: tag and cluster checks → load image → store Secrets `aiops-grok-api-key` and `aiops-smtp` → Helm release
 in `aiops` (CronJob `aiops-pod-doctor-report`, every minute) → run one report now (RCA + e-mail; log in the
 run summary).
@@ -471,12 +476,13 @@ gh run list --workflow website_cd.yml --limit 3
 | Release a new website version | push to `services/website/**` → CI publishes → `website_cd.yml` per tenant with the new `image_tag` |
 | Roll back a tenant | `website_cd.yml` with the previous `image_tag`, or `helm rollback <tenant> <rev> -n <tenant>` ([rollback.md](rollback.md)) |
 | Change the version number | edit `VERSION` (e.g. `1.1.0`); next builds are `1.1.0-<timestamp>` |
-| Rotate the orchestrator token | `gh secret set ORCHESTRATOR_GITHUB_TOKEN`, then re-run `website_orchestrator_cd.yml` |
+| Rotate the orchestrator token | `gh secret set ORCHESTRATOR_GITHUB_TOKEN --env website-orchestrator-deployment`, then re-run `website_orchestrator_cd.yml` |
 | Rotate the Grok key | `gh secret set GROK_API_KEY --env aiops-deployment`, then re-run `aiops_pod_doctor_cd.yml` |
-| Change the e-mail login or recipients | `gh secret set SMTP_USERNAME` / `SMTP_PASSWORD` / `REPORT_EMAIL_TO --env aiops-deployment`, then re-run `aiops_pod_doctor_cd.yml` |
+| Change the e-mail login or recipients | `gh secret set SMTP_USERNAME` / `SMTP_PASSWORD` / `NOTIFY_EMAIL_TO`, then re-run `aiops_pod_doctor_cd.yml` and `website_orchestrator_cd.yml` |
 | Add a reviewer | `./scripts/setup-deployment-approvals.sh <login> [<login>...]` |
 | See what is deployed | `helm list -A`; `kubectl get deploy -A -o wide` |
 | Status of every website from Kafka (live) | `./scripts/kafka-events.sh --watch` |
+| Follow one request end to end (live) | `./scripts/trace-website.sh user4 --watch` |
 | Check every route and find stale pods | `./scripts/check-routes.sh` (also runs at the end of `setup-local-e2e.sh`) |
 | Collect proof of work | `./scripts/collect-proof.sh` ([proof-of-work.md](proof-of-work.md)) |
 
@@ -491,11 +497,11 @@ gh run list --workflow website_cd.yml --limit 3
 | `Invalid image tag` | not a `1.0.0-YYYYMMDDHHMMSS` tag (empty, spaces, full image name, old format) | copy the tag from the CI summary |
 | `manifest unknown` / `not found` pulling the image | tag of a different image, or CI did not publish (PR run) | use the tag from that component's CI push run |
 | `content digest ... not found` loading into Kind | multi-platform image | already handled by `load-image-into-kind.sh`; make sure the run uses the current workflow |
-| `Add the repository secret ORCHESTRATOR_GITHUB_TOKEN` | secret missing | `gh secret set ORCHESTRATOR_GITHUB_TOKEN` (fine-grained, Actions read/write) |
+| `Add the secret ORCHESTRATOR_GITHUB_TOKEN to the 'website-orchestrator-deployment' environment` | secret missing on that environment | `gh secret set ORCHESTRATOR_GITHUB_TOKEN --env website-orchestrator-deployment` (fine-grained, Actions: Read and write) |
 | `Missing GROK_API_KEY` | secret missing on the environment | `gh secret set GROK_API_KEY --env aiops-deployment` |
-| `E-mail not configured` | `SMTP_USERNAME`, `SMTP_PASSWORD` or `REPORT_EMAIL_TO` missing on `aiops-deployment` | set them; see [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md#e-mail-setup-one-time) |
+| `E-mail not configured` | `SMTP_USERNAME`, `SMTP_PASSWORD` or `NOTIFY_EMAIL_TO` not set as repository secrets | set them; see [aiops-pod-doctor/README.md](../aiops-pod-doctor/README.md#e-mail-setup-one-time) |
 | AIOps report run times out | the report job's pod never started | the run log shows the pod's events (image pull, volumes, scheduling); `kubectl get jobs,pods -n aiops` |
-| Report e-mail bounces | invalid recipient, e.g. curly quotes typed into `--body “…”` | set `REPORT_EMAIL_TO` again with straight quotes, re-run the AIOps CD |
+| Report e-mail bounces | invalid recipient, e.g. curly quotes typed into `--body “…”` | set `NOTIFY_EMAIL_TO` again with straight quotes, re-run the AIOps CD |
 | Gmail login fails (`535`) | normal password used, or 2-Step Verification off | use a Gmail **App password** for `SMTP_PASSWORD` |
 | `HTTP 404` from `gh secret set --env` | environment does not exist | `./scripts/setup-deployment-approvals.sh` |
 | Website request accepted but no deployment run | orchestrator token missing/expired, or orchestrator down | `kubectl logs -n platform deploy/website-orchestrator` |

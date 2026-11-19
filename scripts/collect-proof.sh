@@ -51,24 +51,32 @@ echo "Writing evidence to $out/"
   run "Helm releases (all namespaces)" helm list --all-namespaces
   for tenant in $TENANTS; do
     domain="$tenant.$DOMAIN_SUFFIX"
-    run "$tenant: workloads, services, ingress" kubectl get deploy,statefulset,svc,ingress -n "$tenant"
+    run "$tenant: workloads, services, ingress" kubectl get deploy,svc,ingress -n "$tenant"
     run "$tenant: HPA, PDB, quota, limits, network policies" kubectl get hpa,pdb,resourcequota,limitrange,networkpolicy -n "$tenant"
     run "$tenant: TLS certificate" kubectl get certificate -n "$tenant"
     run "$tenant: HTTPS /api/v1" curl -ksS --resolve "$domain:$HTTPS_PORT:127.0.0.1" "https://$domain:$HTTPS_PORT/api/v1"
-    run "$tenant: HTTPS /health/ready (checks its own database)" curl -ksS --resolve "$domain:$HTTPS_PORT:127.0.0.1" "https://$domain:$HTTPS_PORT/health/ready"
+    run "$tenant: HTTPS /health/ready (checks the platform database)" curl -ksS --resolve "$domain:$HTTPS_PORT:127.0.0.1" "https://$domain:$HTTPS_PORT/health/ready"
   done
-  # Isolation: the first tenant's app must NOT reach the second tenant's database
+  # Isolation: a tenant's app may reach only DNS and the shared platform database (its NetworkPolicy egress),
+  # so the first tenant must NOT reach the second tenant's website, but must reach the platform database
   # shellcheck disable=SC2086  # split the tenant list into words on purpose
   set -- $TENANTS
   if [[ $# -ge 2 ]]; then
-    run "Isolation: $1 app -> $2-postgres.$2:5432 (expected: blocked)" \
+    run "Isolation: $1 app -> $2 website ($2.$2:80, expected: blocked)" \
       kubectl exec -n "$1" deploy/"$1"-website -- python -c "
 import socket
 try:
-    socket.create_connection(('$2-postgres.$2.svc.cluster.local', 5432), timeout=4)
+    socket.create_connection(('$2.$2.svc.cluster.local', 80), timeout=4)
     print('REACHABLE - isolation NOT working')
 except OSError as error:
     print('BLOCKED as expected:', error)"
+  fi
+  if [[ $# -ge 1 ]]; then
+    run "Shared database: $1 app -> postgresql.platform-data:5432 (expected: reachable)" \
+      kubectl exec -n "$1" deploy/"$1"-website -- python -c "
+import socket
+socket.create_connection(('postgresql.platform-data.svc.cluster.local', 5432), timeout=4)
+print('REACHABLE as expected: the platform database')"
   fi
 } > "$out/1-multi-tenant.txt"
 

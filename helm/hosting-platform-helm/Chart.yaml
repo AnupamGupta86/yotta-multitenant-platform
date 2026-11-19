@@ -1,6 +1,6 @@
 apiVersion: v2
 name: hosting-platform
-description: Day 0 website request API and its private PostgreSQL database
+description: Hosting platform API (FastAPI) - users and website requests, stored in the platform database
 type: application
 version: 0.1.0
 appVersion: "1.0.0"

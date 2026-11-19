@@ -2,7 +2,7 @@
 
 Routes
   GET /health/live      liveness (no database call)
-  GET /health/ready     readiness (checks the tenant's own PostgreSQL)
+  GET /health/ready     readiness (checks the platform database)
   GET /api/v1           service identity
   GET /api/v1/workload  CPU-heavy request, used by the autoscaling demo
   GET /metrics          Prometheus request counter per endpoint and status
@@ -37,7 +37,7 @@ def metrics_text() -> str:
 
 
 def create_app(ping_database: Callable[[], None]) -> Flask:
-    """Build the app. ping_database raises when the tenant database is not reachable."""
+    """Build the app. ping_database raises when the platform database is not reachable."""
     app = Flask(__name__)
 
     @app.before_request

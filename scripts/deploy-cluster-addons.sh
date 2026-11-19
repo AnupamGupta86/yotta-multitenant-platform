@@ -79,7 +79,8 @@ helm_retry helm repo update "$INGRESS_REPOSITORY" "$METRICS_REPOSITORY"
   --set controller.hostPort.enabled=true \
   --set-string controller.nodeSelector.ingress-ready=true \
   --set-json 'controller.tolerations=[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]' \
-  --set controller.service.type=ClusterIP
+  --set controller.service.type=ClusterIP \
+  --set controller.metrics.enabled=true   # request metrics by status, for the 4XX / 5XX dashboard panels
 
 "$script_dir/helm-release.sh" "$METRICS_RELEASE" "$METRICS_REPOSITORY/metrics-server" \
   --version "$METRICS_SERVER_VERSION" \

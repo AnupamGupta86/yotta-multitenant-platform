@@ -112,6 +112,7 @@ jobs:
             --set-string controller.nodeSelector.ingress-ready=true \
             --set-json 'controller.tolerations=[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]' \
             --set controller.service.type=ClusterIP \
+            --set controller.metrics.enabled=true \
             > /tmp/rendered-addons/ingress-nginx.yaml
           helm template metrics-server metrics-server/metrics-server \
             --version "$METRICS_SERVER_VERSION" --namespace kube-system \

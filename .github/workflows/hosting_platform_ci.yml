@@ -81,7 +81,7 @@ jobs:
       - name: Load shared pipeline defaults
         id: pipeline
         run: bash .github/scripts/load-pipeline-config.sh
-      - name: Build the platform database and Provisioning API images
+      - name: Build the platform database and Hosting Platform API images
         run: |
           docker build -t local/myyotta-postgresql:e2e services/database
           docker build -t local/hosting-platform:e2e services/hosting-platform

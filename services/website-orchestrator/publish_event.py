@@ -22,7 +22,7 @@ def build_event(
         "domain": domain,
         "image": image,
         # timezone.utc, not datetime.UTC: this also runs with the runner Mac's own python3 (< 3.11)
-        "occurred_at": occurred_at or datetime.now(timezone.utc).isoformat(),  # noqa: UP017
+        "occurred_at": occurred_at or datetime.now(timezone.utc).isoformat(),
     }
     if correlation_id:
         event["correlation_id"] = correlation_id

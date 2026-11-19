@@ -70,7 +70,7 @@ if [ -f "$docker_config" ] && grep -q '"credsStore"[[:space:]]*:[[:space:]]*"des
   fi
 fi
 
-# 5. Enough memory for Kafka, Prometheus, Loki, Calico and the tenant databases?
+# 5. Enough memory for Kafka, Prometheus, Loki, Calico and the platform database?
 docker_memory_bytes="$(docker info --format '{{.MemTotal}}' 2>/dev/null)"
 case "$docker_memory_bytes" in
   '' | *[!0-9]*) docker_memory_bytes=0 ;;

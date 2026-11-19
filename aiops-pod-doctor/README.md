@@ -47,7 +47,7 @@ Pods that are starting, finished (`Succeeded`) or being deleted are ignored.
 | Kubernetes Secret (namespace `aiops`) | Keys | Mounted at | Created by CD from GitHub environment `aiops-deployment` |
 |---|---|---|---|
 | `aiops-grok-api-key` | `api-key` | `/etc/aiops/grok/api-key` | secret `GROK_API_KEY` |
-| `aiops-smtp` | `username`, `password`, `to` | `/etc/aiops/smtp/` | secrets `SMTP_USERNAME`, `SMTP_PASSWORD`, `REPORT_EMAIL_TO` |
+| `aiops-smtp` | `username`, `password`, `to` | `/etc/aiops/smtp/` | secrets `SMTP_USERNAME`, `SMTP_PASSWORD`, `NOTIFY_EMAIL_TO` |
 
 Both are mounted as **read-only files** and the app reads the values from those files
 (`src/config.py`), instead of environment variables (which every process in the container can read
@@ -60,11 +60,12 @@ Any SMTP account works. With **Gmail** (needs 2-Step Verification on the account
 
 1. Create an **App password**: Google Account → Security → 2-Step Verification → *App passwords*
    (name it "aiops"); Google shows a 16-character password once.
-2. Store the values in the GitHub environment (never in the repository):
+2. Store the values as repository secrets (never in the repository files); the website orchestrator uses the
+   same three for its event e-mails:
    ```bash
-   gh secret set SMTP_USERNAME   --env aiops-deployment --body "your.sender@gmail.com"
-   gh secret set SMTP_PASSWORD   --env aiops-deployment          # paste the app password when asked
-   gh secret set REPORT_EMAIL_TO --env aiops-deployment --body "you@example.com"   # comma separate several
+   gh secret set SMTP_USERNAME   --body "your.sender@gmail.com"
+   gh secret set SMTP_PASSWORD                                   # paste the app password when asked
+   gh secret set NOTIFY_EMAIL_TO --body "you@example.com"        # comma separate several
    ```
 3. Other providers: also set `gh variable set SMTP_HOST --env aiops-deployment --body smtp.office365.com`
    and `SMTP_PORT` (`587` STARTTLS, default; `465` implicit TLS). Defaults: `smtp.gmail.com:587`.

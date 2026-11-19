@@ -3,7 +3,7 @@
   "uid": "yotta-websites",
   "schemaVersion": 39,
   "version": 4,
-  "description": "Filter by Namespace (platform, aiops, observability, user1, user2...) and Service (container). Overview -> pods -> CPU -> memory -> network -> website traffic -> Kafka and website events -> databases -> logs.",
+  "description": "Filter by Namespace (platform, aiops, observability, user1, user2...) and Service (container). Overview -> pods -> CPU -> memory -> network -> website traffic -> HTTP errors per service -> Kafka and website events -> platform database -> logs.",
   "refresh": "15s",
   "time": {
     "from": "now-30m",
@@ -1330,7 +1330,7 @@
     {
       "id": 28,
       "type": "row",
-      "title": "Kafka and website events",
+      "title": "HTTP errors per service (4XX / 5XX, at the ingress)",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1342,6 +1342,488 @@
     },
     {
       "id": 29,
+      "title": "4XX responses in time range",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Client errors: 400 bad request, 404 not found, 409 conflict, 422 invalid input...",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 74
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "round(sum(increase(nginx_ingress_controller_requests{namespace=~\"$namespace\", status=~\"4..\"}[$__range])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "title": "5XX responses in time range",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Server errors: 500, 502 bad gateway (pod down), 503 unavailable, 504 timeout.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 74
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "round(sum(increase(nginx_ingress_controller_requests{namespace=~\"$namespace\", status=~\"5..\"}[$__range])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "title": "4XX rate (% of requests)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "From ingress-nginx: every request that comes in through the Ingress (tenant websites, the hosting-platform API, Grafana/Prometheus). Lines are namespace/service. Filtered by Namespace only.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 74
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(rate(nginx_ingress_controller_requests{namespace=~\"$namespace\", status=~\"4..\"}[5m])) / sum(rate(nginx_ingress_controller_requests{namespace=~\"$namespace\"}[5m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "title": "5XX rate (% of requests)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "From ingress-nginx: every request that comes in through the Ingress (tenant websites, the hosting-platform API, Grafana/Prometheus). Lines are namespace/service. Filtered by Namespace only.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 74
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(rate(nginx_ingress_controller_requests{namespace=~\"$namespace\", status=~\"5..\"}[5m])) / sum(rate(nginx_ingress_controller_requests{namespace=~\"$namespace\"}[5m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "title": "4XX responses per minute by service",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "From ingress-nginx: every request that comes in through the Ingress (tenant websites, the hosting-platform API, Grafana/Prometheus). Lines are namespace/service. Filtered by Namespace only.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 78
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "60 * sum by (namespace, service) (rate(nginx_ingress_controller_requests{namespace=~\"$namespace\", status=~\"4..\"}[5m]))",
+          "legendFormat": "{{namespace}}/{{service}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "title": "5XX responses per minute by service",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "From ingress-nginx: every request that comes in through the Ingress (tenant websites, the hosting-platform API, Grafana/Prometheus). Lines are namespace/service. Filtered by Namespace only.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 78
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "60 * sum by (namespace, service) (rate(nginx_ingress_controller_requests{namespace=~\"$namespace\", status=~\"5..\"}[5m]))",
+          "legendFormat": "{{namespace}}/{{service}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "title": "4XX and 5XX by service and status code",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Per minute. From ingress-nginx: every request that comes in through the Ingress (tenant websites, the hosting-platform API, Grafana/Prometheus). Lines are namespace/service. Filtered by Namespace only.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 86
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "60 * sum by (namespace, service, status) (rate(nginx_ingress_controller_requests{namespace=~\"$namespace\", status=~\"[45]..\"}[5m]))",
+          "legendFormat": "{{namespace}}/{{service}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "title": "Error rate by service (%)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Share of each service's requests that failed. From ingress-nginx: every request that comes in through the Ingress (tenant websites, the hosting-platform API, Grafana/Prometheus). Lines are namespace/service. Filtered by Namespace only.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 86
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum by (namespace, service) (rate(nginx_ingress_controller_requests{namespace=~\"$namespace\", status=~\"4..\"}[5m])) / sum by (namespace, service) (rate(nginx_ingress_controller_requests{namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{namespace}}/{{service}} 4XX",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "100 * sum by (namespace, service) (rate(nginx_ingress_controller_requests{namespace=~\"$namespace\", status=~\"5..\"}[5m])) / sum by (namespace, service) (rate(nginx_ingress_controller_requests{namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{namespace}}/{{service}} 5XX",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 37,
+      "type": "row",
+      "title": "Kafka and website events",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 94
+      },
+      "panels": []
+    },
+    {
+      "id": 38,
       "title": "Kafka brokers up",
       "type": "stat",
       "datasource": {
@@ -1353,7 +1835,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 74
+        "y": 95
       },
       "fieldConfig": {
         "defaults": {
@@ -1400,7 +1882,7 @@
       ]
     },
     {
-      "id": 30,
+      "id": 39,
       "title": "Messages in website-events",
       "type": "stat",
       "datasource": {
@@ -1412,7 +1894,7 @@
         "h": 4,
         "w": 4,
         "x": 4,
-        "y": 74
+        "y": 95
       },
       "fieldConfig": {
         "defaults": {
@@ -1455,7 +1937,7 @@
       ]
     },
     {
-      "id": 31,
+      "id": 40,
       "title": "Unprocessed events (orchestrator lag)",
       "type": "stat",
       "datasource": {
@@ -1467,7 +1949,7 @@
         "h": 4,
         "w": 4,
         "x": 8,
-        "y": 74
+        "y": 95
       },
       "fieldConfig": {
         "defaults": {
@@ -1518,7 +2000,7 @@
       ]
     },
     {
-      "id": 32,
+      "id": 41,
       "title": "Requested in time range",
       "type": "stat",
       "datasource": {
@@ -1529,7 +2011,7 @@
         "h": 4,
         "w": 4,
         "x": 12,
-        "y": 74
+        "y": 95
       },
       "fieldConfig": {
         "defaults": {
@@ -1566,7 +2048,7 @@
       ]
     },
     {
-      "id": 33,
+      "id": 42,
       "title": "Created (live) in time range",
       "type": "stat",
       "datasource": {
@@ -1577,7 +2059,7 @@
         "h": 4,
         "w": 4,
         "x": 16,
-        "y": 74
+        "y": 95
       },
       "fieldConfig": {
         "defaults": {
@@ -1614,7 +2096,7 @@
       ]
     },
     {
-      "id": 34,
+      "id": 43,
       "title": "Deployment failed in time range",
       "type": "stat",
       "datasource": {
@@ -1625,7 +2107,7 @@
         "h": 4,
         "w": 4,
         "x": 20,
-        "y": 74
+        "y": 95
       },
       "fieldConfig": {
         "defaults": {
@@ -1662,7 +2144,7 @@
       ]
     },
     {
-      "id": 35,
+      "id": 44,
       "title": "Kafka messages per minute by topic",
       "type": "timeseries",
       "datasource": {
@@ -1674,7 +2156,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 99
       },
       "fieldConfig": {
         "defaults": {
@@ -1715,7 +2197,7 @@
       ]
     },
     {
-      "id": 36,
+      "id": 45,
       "title": "Consumer lag (queue backlog)",
       "type": "timeseries",
       "datasource": {
@@ -1727,7 +2209,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 99
       },
       "fieldConfig": {
         "defaults": {
@@ -1768,7 +2250,7 @@
       ]
     },
     {
-      "id": 37,
+      "id": 46,
       "title": "Website events by type",
       "type": "timeseries",
       "datasource": {
@@ -1779,7 +2261,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 86
+        "y": 107
       },
       "fieldConfig": {
         "defaults": {
@@ -1863,7 +2345,7 @@
       ]
     },
     {
-      "id": 38,
+      "id": 47,
       "title": "Website events by tenant",
       "type": "timeseries",
       "datasource": {
@@ -1874,7 +2356,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 86
+        "y": 107
       },
       "fieldConfig": {
         "defaults": {
@@ -1958,7 +2440,7 @@
       ]
     },
     {
-      "id": 39,
+      "id": 48,
       "title": "Website event log (newest first)",
       "type": "logs",
       "datasource": {
@@ -1969,7 +2451,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 115
       },
       "options": {
         "showTime": true,
@@ -1988,20 +2470,20 @@
       ]
     },
     {
-      "id": 40,
+      "id": 49,
       "type": "row",
-      "title": "Databases",
+      "title": "Platform database",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 102
+        "y": 123
       },
       "panels": []
     },
     {
-      "id": 41,
+      "id": 50,
       "title": "Ready PostgreSQL replicas",
       "type": "timeseries",
       "datasource": {
@@ -2013,7 +2495,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 103
+        "y": 124
       },
       "fieldConfig": {
         "defaults": {
@@ -2054,7 +2536,7 @@
       ]
     },
     {
-      "id": 42,
+      "id": 51,
       "title": "PostgreSQL volume usage",
       "type": "timeseries",
       "datasource": {
@@ -2066,7 +2548,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 103
+        "y": 124
       },
       "fieldConfig": {
         "defaults": {
@@ -2107,7 +2589,7 @@
       ]
     },
     {
-      "id": 43,
+      "id": 52,
       "type": "row",
       "title": "Logs (Loki)",
       "collapsed": false,
@@ -2115,12 +2597,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 111
+        "y": 132
       },
       "panels": []
     },
     {
-      "id": 44,
+      "id": 53,
       "title": "Error lines per minute",
       "type": "timeseries",
       "datasource": {
@@ -2131,7 +2613,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 112
+        "y": 133
       },
       "fieldConfig": {
         "defaults": {
@@ -2166,7 +2648,7 @@
       ]
     },
     {
-      "id": 45,
+      "id": 54,
       "title": "Logs of the selected services",
       "type": "logs",
       "datasource": {
@@ -2177,7 +2659,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 119
+        "y": 140
       },
       "options": {
         "showTime": true,

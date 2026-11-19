@@ -24,6 +24,16 @@ notification:
   secretName: notification-webhook
   webhookUrl: ""
 
+# E-mail one notification per Kafka website event (requested, created, failed, deletion requested, deleted).
+# The Secret holds username, password and to (comma-separated recipients); it is created outside Helm by
+# Website Orchestrator Deployment from the environment secrets SMTP_USERNAME, SMTP_PASSWORD, NOTIFY_EMAIL_TO.
+# Without the Secret, e-mail is off and events are only logged.
+email:
+  smtpHost: smtp.gmail.com
+  smtpPort: 587             # 587 = STARTTLS, 465 = implicit TLS
+  from: ""                  # empty = the SMTP username
+  existingSecret: orchestrator-smtp
+
 # Platform database (helm/database-helm). Optional for the orchestrator: without the Secret it logs a warning and
 # processes events without recording them. The Secret is copied here by scripts/copy-database-secret.sh.
 platformDatabase:

@@ -22,8 +22,8 @@ All screenshots live in [`docs/proof/screenshots/`](proof/screenshots/). ✅ = c
 | # | File | Section | What it shows | How to capture | Status |
 |---|---|---|---|---|---|
 | 01 | `01-helm-releases.png` | 1 Multi-tenant | every component and tenant as a Helm release | `helm list -A` | ✅ |
-| 02 | `02-pods-all-namespaces.png` | 1 Multi-tenant | all pods Running; 2 app replicas + PostgreSQL per tenant | `kubectl get pod -A` | ✅ |
-| 03 | `03-https-health-checks.png` | 1 Multi-tenant | HTTPS via Ingress, readiness incl. tenant database | `curl -k https://user1.myyotta.com:8443/health/ready` | ✅ |
+| 02 | `02-pods-all-namespaces.png` | 1 Multi-tenant | all pods Running; app pods per tenant, one platform PostgreSQL in `platform-data` | `kubectl get pod -A` | ✅ |
+| 03 | `03-https-health-checks.png` | 1 Multi-tenant | HTTPS via Ingress, readiness incl. the platform database | `curl -k https://user1.myyotta.com:8443/health/ready` | ✅ |
 | 03b | `03b-tenants-browser.png` | 1 Multi-tenant | user1, user2, user3 in three browser tabs (optional) | `https://userN.myyotta.com:8443/api/v1` | ⏳ |
 | 04 | `04-hpa-scaling.png` | 2 Scaling | HPA scale-out starts under load (2 → 6) | `kubectl get hpa -n user1 -w` + `scripts/load-test.py` | ✅ |
 | 05 | `05-hpa-scale-out-and-in.png` | 2 Scaling | full cycle 2 → 8 → 4; 22,585 requests, 0 failed | same | ✅ |
@@ -66,19 +66,22 @@ and add the hosts line to `/etc/hosts`:
 
 ## 1. Multi-tenant websites deployed
 
-**Show:** each tenant runs in its own namespace with its own app, PostgreSQL, Secret, Ingress host, TLS
-certificate, HPA, PDB, quota and network policy, and one tenant cannot reach another's database.
+**Show:** each tenant runs in its own namespace with its own app, Ingress host, TLS certificate, HPA, PDB,
+quota and network policy. All tenants use the one common platform database (`myyotta_platform` in
+`platform-data`); a tenant can reach that database but not another tenant's website.
 
 ```sh
 helm list -A
-kubectl get deploy,statefulset,ingress,hpa,pdb,resourcequota,networkpolicy -n user1
+kubectl get deploy,ingress,hpa,pdb,resourcequota,networkpolicy -n user1
+kubectl get statefulset,pvc,svc -n platform-data             # the one common database
 curl -k https://user1.myyotta.com:8443/api/v1         # {"service":"website","version":"v1"}
-curl -k https://user2.myyotta.com:8443/health/ready   # {"status":"ready"}  (checked its own DB)
+curl -k https://user2.myyotta.com:8443/health/ready   # {"status":"ready"}  (checked the platform database)
 ```
 
 **Expect:** releases `user1`, `user2`, `user3` (plus `kafka`, `logging`, `prometheus`, `grafana-dashboards`, `cluster-issuer`, `website-orchestrator`, `hosting-platform`, `myyotta-postgresql`),
-every tenant `Ready`, certificates `READY=True`, and the isolation check in `1-multi-tenant.txt`
-ending with `BLOCKED as expected`.
+every tenant `Ready`, certificates `READY=True`, and in `1-multi-tenant.txt` the isolation check
+(user1 → user2 website: `BLOCKED as expected`) and the shared-database check (user1 → `postgresql.platform-data`:
+`REACHABLE as expected`).
 
 **New tenant without touching the cluster** (the live part of the demo):
 
@@ -93,15 +96,15 @@ curl -k -X POST https://api.myyotta.com:8443/api/v1/websites \
 
 **Screenshots**
 
-*All platform components and the three tenants are Helm releases* (`helm list -A`): each tenant (`user1`–`user3`) is its own release in its own namespace, next to the platform, provisioning API, monitoring, cluster add-ons and the AIOps doctor.
+*All platform components and the three tenants are Helm releases* (`helm list -A`): each tenant (`user1`–`user3`) is its own release in its own namespace, next to the platform, hosting-platform API, monitoring, cluster add-ons and the AIOps doctor.
 
 ![Helm releases](proof/screenshots/01-helm-releases.png)
 
-*Every pod is Running* (`kubectl get pod -A`): each tenant namespace has two app replicas and its own PostgreSQL; the platform, observability and add-on pods are healthy.
+*Every pod is Running* (`kubectl get pod -A`): each tenant namespace runs its website pods, `platform-data` runs the one common PostgreSQL, and the platform, observability and add-on pods are healthy.
 
 ![All pods](proof/screenshots/02-pods-all-namespaces.png)
 
-*HTTPS through the Ingress with TLS*: the provisioning API and user1 report ready (user1 checked its own database) and user1 serves its API.
+*HTTPS through the Ingress with TLS*: the hosting-platform API and user1 report ready (user1 checked the platform database) and user1 serves its API.
 
 ![HTTPS health checks](proof/screenshots/03-https-health-checks.png)
 
@@ -190,7 +193,7 @@ run summary; that tag is the CD input.
 ![Provisioning image tag](proof/screenshots/12-ci-tag-provisioning.png)
 ![Website app image tag](proof/screenshots/13-ci-tag-website.png)
 
-*CD history*: manual deployments of the provisioning API, the orchestrator and tenant websites. The early red runs
+*CD history*: manual deployments of the hosting-platform API, the orchestrator and tenant websites. The early red runs
 are from setting up the self-hosted runner (wrong tag, missing secret, runner Python); every later run is green.
 
 ![Provisioning CD runs](proof/screenshots/14-cd-provisioning-runs.png)

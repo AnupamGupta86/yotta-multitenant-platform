@@ -1,5 +1,5 @@
 # Local run without Kubernetes. The database is the same image Kubernetes runs (services/database:
-# PostgreSQL 16 + schema 001-008); the provisioning API and the orchestrator use it like in the cluster.
+# PostgreSQL 16 + schema 001-008); the hosting-platform API and the orchestrator use it like in the cluster.
 services:
   postgres:
     build: ./services/database

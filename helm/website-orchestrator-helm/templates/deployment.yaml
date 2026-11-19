@@ -44,6 +44,17 @@ spec:
                   name: {{ .Values.github.tokenSecretName }}
                   key: token
                   optional: true
+            - {name: SMTP_HOST, value: {{ .Values.email.smtpHost | quote }}}
+            - {name: SMTP_PORT, value: {{ .Values.email.smtpPort | quote }}}
+            - {name: NOTIFY_EMAIL_FROM, value: {{ .Values.email.from | quote }}}
+            {{- range $env, $key := dict "SMTP_USERNAME" "username" "SMTP_PASSWORD" "password" "NOTIFY_EMAIL_TO" "to" }}
+            - name: {{ $env }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.email.existingSecret }}
+                  key: {{ $key }}
+                  optional: true
+            {{- end }}
             - {name: DB_HOST, value: {{ .Values.platformDatabase.host | quote }}}
             - {name: DB_PORT, value: {{ .Values.platformDatabase.port | quote }}}
             - {name: DB_NAME, value: {{ .Values.platformDatabase.name | quote }}}

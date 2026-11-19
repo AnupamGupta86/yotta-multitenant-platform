@@ -24,6 +24,7 @@ WEBSITE_ORCHESTRATOR_RELEASE=website-orchestrator
 WEBSITE_ORCHESTRATOR_CHART=helm/website-orchestrator-helm
 PLATFORM_NAMESPACE=platform
 ORCHESTRATOR_TOKEN_SECRET=orchestrator-github-token
+ORCHESTRATOR_SMTP_SECRET=orchestrator-smtp
 PLATFORM_TIMEOUT=15m
 WEBSITE_ORCHESTRATOR_DEPLOYMENT=website-orchestrator
 # A new tag per setup run: re-using one fixed tag (":local") leaves pods started earlier on the old image,
@@ -98,7 +99,23 @@ printf '%s' "$ORCHESTRATOR_GITHUB_TOKEN" \
       --namespace "$PLATFORM_NAMESPACE" --from-file=token=/dev/stdin \
       --dry-run=client -o yaml \
   | kubectl apply -f -
+# Optional: e-mail every website event. Export SMTP_USERNAME, SMTP_PASSWORD (e.g. a Gmail app password) and
+# NOTIFY_EMAIL_TO before running this script; the values go to the Secret through files, never arguments.
+if [ -n "${SMTP_USERNAME:-}" ] && [ -n "${SMTP_PASSWORD:-}" ] && [ -n "${NOTIFY_EMAIL_TO:-}" ]; then
+  smtp_dir="$(mktemp -d)"
+  (umask 077
+   printf '%s' "$SMTP_USERNAME" > "$smtp_dir/username"
+   printf '%s' "$SMTP_PASSWORD" > "$smtp_dir/password"
+   printf '%s' "$NOTIFY_EMAIL_TO" > "$smtp_dir/to")
+  kubectl create secret generic "$ORCHESTRATOR_SMTP_SECRET" --namespace "$PLATFORM_NAMESPACE" \
+    --from-file=username="$smtp_dir/username" --from-file=password="$smtp_dir/password" \
+    --from-file=to="$smtp_dir/to" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  rm -rf "$smtp_dir"
+  echo "Website event e-mails go to $NOTIFY_EMAIL_TO"
+else
+  echo "Website event e-mails are off (export SMTP_USERNAME, SMTP_PASSWORD and NOTIFY_EMAIL_TO to turn them on)"
+fi
 kubectl rollout restart deployment/website-orchestrator --namespace "$PLATFORM_NAMESPACE"
 kubectl rollout status "deployment/$WEBSITE_ORCHESTRATOR_DEPLOYMENT" --namespace "$PLATFORM_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT"
-echo "Platform is ready. Deploy Day 0 with the Provisioning API GitHub Actions workflow."
+echo "Platform is ready. Deploy Day 0 with the Hosting Platform API GitHub Actions workflow."
 echo "Kind platform is ready on HTTPS port 8443. Observability (add the hostnames to /etc/hosts): $OBSERVABILITY_UIS"

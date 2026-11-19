@@ -83,7 +83,8 @@ jobs:
     runs-on: [self-hosted, macOS, yotta-local-k8s]
     # Manual approval: this job waits at "Review deployments" until a reviewer of the 'aiops-deployment'
     # environment approves it (reviewers: scripts/setup-deployment-approvals.sh or Settings -> Environments).
-    # The environment also holds the secrets GROK_API_KEY, SMTP_USERNAME, SMTP_PASSWORD, REPORT_EMAIL_TO.
+    # Secrets: GROK_API_KEY on this environment; SMTP_USERNAME, SMTP_PASSWORD and NOTIFY_EMAIL_TO are repository
+    # secrets, shared with the website orchestrator.
     environment:
       name: aiops-deployment
     timeout-minutes: 20
@@ -133,10 +134,10 @@ jobs:
           # From Settings -> Environments -> aiops-deployment -> Environment secrets
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+          NOTIFY_EMAIL_TO: ${{ secrets.NOTIFY_EMAIL_TO }}
         run: |
-          if [[ -z "$SMTP_USERNAME" || -z "$SMTP_PASSWORD" || -z "$REPORT_EMAIL_TO" ]]; then
-            echo "::error title=E-mail not configured::Add SMTP_USERNAME, SMTP_PASSWORD and REPORT_EMAIL_TO to the 'aiops-deployment' environment (gh secret set <NAME> --env aiops-deployment)"
+          if [[ -z "$SMTP_USERNAME" || -z "$SMTP_PASSWORD" || -z "$NOTIFY_EMAIL_TO" ]]; then
+            echo "::error title=E-mail not configured::Set the repository secrets SMTP_USERNAME, SMTP_PASSWORD and NOTIFY_EMAIL_TO (gh secret set <NAME>)"
             exit 2
           fi
           # Values go through files readable only by this job, never through a command line
@@ -145,7 +146,7 @@ jobs:
           (umask 077
            printf '%s' "$SMTP_USERNAME" > "$secret_dir/username"
            printf '%s' "$SMTP_PASSWORD" > "$secret_dir/password"
-           printf '%s' "$REPORT_EMAIL_TO" > "$secret_dir/to")
+           printf '%s' "$NOTIFY_EMAIL_TO" > "$secret_dir/to")
           kubectl create secret generic "$AIOPS_SMTP_SECRET" --namespace "$AIOPS_NAMESPACE" \
             --from-file=username="$secret_dir/username" --from-file=password="$secret_dir/password" \
             --from-file=to="$secret_dir/to" --dry-run=client -o yaml | kubectl apply -f -

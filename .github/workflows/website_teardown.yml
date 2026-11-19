@@ -1,4 +1,5 @@
 name: Website Teardown
+run-name: Website Teardown · ${{ inputs.tenant }}
 # Started by the orchestrator for DELETE /api/v1/websites (event WebsiteDeletionRequested), or by hand.
 # review (what will be deleted, no approval) -> teardown (approval) -> helm uninstall, namespace delete,
 # then WebsiteDeleted on Kafka, so the orchestrator removes the website from the platform database.

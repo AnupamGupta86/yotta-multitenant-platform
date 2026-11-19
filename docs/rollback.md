@@ -41,10 +41,12 @@ helm rollback user1 <revision> -n user1 --wait
 helm status user1 -n user1
 ```
 
-Same for `hosting-platform`, `platform` (namespace `platform`) and `aiops-pod-doctor` (namespace `aiops`).
+Same for `hosting-platform`, `website-orchestrator`, `kafka` (namespace `platform`), `myyotta-postgresql` (namespace `platform-data`) and `aiops-pod-doctor` (namespace `aiops`).
 
 ## What a rollback does not undo
 
-Database contents. Each tenant's PostgreSQL data lives on a PersistentVolumeClaim and is kept across
-rollbacks and pod restarts. Schema changes must therefore stay backward compatible with the previous
-release (expand first, remove later), or be reverted by a separate migration.
+Database contents. All services share one database, `myyotta_platform` (release `myyotta-postgresql` in
+`platform-data`); its data lives on one PersistentVolumeClaim and is kept across rollbacks and pod restarts of
+any release. Rolling back a website, the API or the orchestrator never changes a row. Schema changes must
+therefore stay backward compatible with the previous release of every service that uses the database
+(expand first, remove later), or be reverted by a separate migration.

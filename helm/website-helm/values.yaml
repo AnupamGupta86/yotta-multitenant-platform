@@ -97,7 +97,7 @@ networkPolicy:
   dnsPodLabelValue: kube-dns
   dnsUdpPort: 53
   dnsTcpPort: 53
-# Platform database (helm/database-helm in platform-data); tenants no longer run their own PostgreSQL
+# Platform database (helm/database-helm in platform-data); websites keep no data of their own
 platformDatabase:
   host: postgresql.platform-data.svc.cluster.local
   namespace: platform-data

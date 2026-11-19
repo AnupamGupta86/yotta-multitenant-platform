@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end test of the Provisioning API with its real dependencies, as containers on one Docker network:
+# End-to-end test of the Hosting Platform API with its real dependencies, as containers on one Docker network:
 # the platform database image (services/database: schema 001-008), Kafka, and the API image.
 # Calls every endpoint and checks the HTTP status, the Kafka events and the database rows.
 # Usage: .github/scripts/provisioning-e2e.sh <api-image> <database-image>

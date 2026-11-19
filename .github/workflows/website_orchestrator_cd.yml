@@ -55,6 +55,8 @@ jobs:
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
       HELM_MODE: diff
+      SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+      SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
       GHCR_REPOSITORY: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v7
@@ -93,6 +95,8 @@ jobs:
       packages: read
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
+      SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+      SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -124,6 +128,28 @@ jobs:
         run: |
           ./scripts/copy-database-secret.sh "$PLATFORM_NAMESPACE" \
             || echo "::warning::Platform database not deployed yet: the orchestrator runs without recording events. Run Database Deployment, then re-run this workflow."
+      - name: E-mail settings for event notifications (optional)
+        env:
+          # Repository secrets, shared with AIOps. The values only reach the cluster through files,
+          # never command-line arguments or the log.
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          NOTIFY_EMAIL_TO: ${{ secrets.NOTIFY_EMAIL_TO }}
+        run: |
+          if [[ -z "$SMTP_USERNAME" || -z "$SMTP_PASSWORD" || -z "$NOTIFY_EMAIL_TO" ]]; then
+            echo "::warning title=E-mail off::Set the repository secrets SMTP_USERNAME, SMTP_PASSWORD and NOTIFY_EMAIL_TO (gh secret set <NAME>) to e-mail every website event."
+            exit 0
+          fi
+          secret_dir="$(mktemp -d "$RUNNER_TEMP/smtp.XXXXXX")"
+          trap 'rm -rf "$secret_dir"' EXIT
+          (umask 077
+           printf '%s' "$SMTP_USERNAME" > "$secret_dir/username"
+           printf '%s' "$SMTP_PASSWORD" > "$secret_dir/password"
+           printf '%s' "$NOTIFY_EMAIL_TO" > "$secret_dir/to")
+          kubectl create secret generic "$ORCHESTRATOR_SMTP_SECRET" --namespace "$PLATFORM_NAMESPACE" \
+            --from-file=username="$secret_dir/username" --from-file=password="$secret_dir/password" \
+            --from-file=to="$secret_dir/to" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+          echo "E-mail notifications go to the NOTIFY_EMAIL_TO recipients via $SMTP_HOST:$SMTP_PORT"
       - name: Install or upgrade the website-orchestrator release with Helm
         env:
           GHCR_REPOSITORY: ${{ github.repository }}
@@ -133,8 +159,9 @@ jobs:
           ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN }}
         run: |
           if [[ -z "$ORCHESTRATOR_GITHUB_TOKEN" ]]; then
-            echo "::error::Add the repository secret ORCHESTRATOR_GITHUB_TOKEN: a fine-grained token for this repository with 'Actions: Read and write' (see docs/deployment.md)."
+            echo "::error::Add the secret ORCHESTRATOR_GITHUB_TOKEN to the 'website-orchestrator-deployment' environment (gh secret set ORCHESTRATOR_GITHUB_TOKEN --env website-orchestrator-deployment): a fine-grained token for this repository with 'Actions: Read and write' (see docs/deployment.md)."
             exit 2
           fi
           .github/scripts/helm-releases.sh orchestrator
+          # Also restarts the orchestrator, so the token and e-mail Secrets written above are picked up
           bash .github/scripts/update-orchestrator-token.sh

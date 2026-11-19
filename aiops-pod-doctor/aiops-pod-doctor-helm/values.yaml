@@ -26,7 +26,7 @@ email:
   from: ""                  # empty = the SMTP username
   # Kubernetes Secret with keys "username", "password" and "to" (comma separated recipients),
   # mounted at /etc/aiops/smtp. Created by the CD pipeline from the 'aiops-deployment' environment
-  # secrets SMTP_USERNAME, SMTP_PASSWORD and REPORT_EMAIL_TO. Without it reports are only logged.
+  # secrets SMTP_USERNAME, SMTP_PASSWORD and NOTIFY_EMAIL_TO. Without it reports are only logged.
   existingSecret: aiops-smtp
 
 # The doctor: a CronJob that runs every minute, does the RCA for ONE newly failing pod and e-mails the report

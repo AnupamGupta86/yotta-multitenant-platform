@@ -117,8 +117,17 @@ def notify_outcome(event, environ=None):
     logger.info("Notification sent for event_id=%s", event.get("event_id"))
 
 
-def handle_event(event, dispatch=dispatch_website, notify=notify_outcome, teardown=dispatch_teardown, store=None):
+def send_email(event):
+    from src.emailer import send_event_email
+
+    send_event_email(event)
+
+
+def handle_event(
+    event, dispatch=dispatch_website, notify=notify_outcome, teardown=dispatch_teardown, store=None, email=send_email
+):
     """Process one website event. `store` (EventStore) records it in the platform database when configured.
+    `email` sends one notification e-mail per event once it was processed (never fails the event).
 
     Database writes come first and are safe to repeat, so a failed step (exception) leaves the Kafka
     message uncommitted and the whole event is processed again.
@@ -158,6 +167,7 @@ def handle_event(event, dispatch=dispatch_website, notify=notify_outcome, teardo
         if store:
             store.record_outcome(event)
         notify(event)
+    email(event)
 
 
 def event_store(environ=None):

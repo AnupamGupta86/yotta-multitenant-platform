@@ -117,7 +117,7 @@ def create_app(store=None, publish=None, kafka_ready=None, lifespan=None):
         try:
             store.ping()
         except Exception as error:
-            logger.exception("Provisioning API database readiness check failed")
+            logger.exception("Hosting Platform API database readiness check failed")
             raise HTTPException(status_code=503, detail="database_unavailable") from error
         return {"status": "ready"}
 

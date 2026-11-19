@@ -18,7 +18,7 @@ loglevel = os.environ.get("LOG_LEVEL", "info").lower()
 
 
 def on_starting(server):
-    """Refuse to start without database settings, and wait until the tenant database answers."""
+    """Refuse to start without database settings, and wait until the platform database answers."""
     from src.server import check_settings, wait_for_database
 
     check_settings()
