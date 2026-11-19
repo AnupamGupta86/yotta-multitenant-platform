@@ -1,4 +1,4 @@
-# CI retrigger marker: 2026-11-18 21:42 IST end-to-end check.
+# CI retrigger marker: 2026-11-19 15:15 IST end-to-end check.
 name: Database CI
 # Validates the platform database (services/database + helm/database-helm), proves the schema in a real
 # PostgreSQL 16 container, scans it, and publishes the image for Database Deployment.
